@@ -1,0 +1,136 @@
+<!--
+  Copyright 2018 The Distill Template Authors
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+       http://www.apache.org/licenses/LICENSE-2.0
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!doctype html>
+
+<head>
+  <script src="https://distill.pub/template.v2.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" >
+  <meta charset="utf8">
+  <style></style>
+</head>
+
+<body>
+<d-front-matter>
+  <script id='distill-front-matter' type="text/json">{
+    "title": "Reinforcement Learning 1: The grid world",
+    "published": "May 8, 2018",
+    "authors": [
+      {
+        "author":"Jerrick Hoang",
+        "authorURL":"https://jerrickhoang.github.io/",
+        "affiliation":"Uber ATG",
+        "affiliationURL":"https://g.co/brain"
+      }
+    ],
+    "katex": {
+      "delimiters": [
+        {"left": "$$", "right": "$$", "display": false} ]
+    }
+  }</script>
+</d-front-matter>
+<d-title>
+  <figure style="grid-column: page; margin: 1rem 0;"><img src="cover.png" style="width:100%; border: 1px solid rgba(0, 0, 0, 0.2);"/></figure>
+  <p>In this short post, I want to give an introduction to the problem statement and characteristics of reinforcement learning as well as implement some basic techniques to solve grid world. This is chapter 1 of a series of posts about modern reinforcement learning techniques.</p>
+
+</d-title>
+<d-article>
+  <a class="marker" href="#section-1" id="section-1"><span>1</span></a>
+  <h2>Motivation</h2>
+
+  <p>In <b>supervised learning</b>, a dataset (often drawn i.i.d from a hidden distribution) is provided by a supervisor. The optimization problem is to maximize a certain loss function, e.g. L2 or cross entropy. While this setup is useful in some problems, it's missing certain characteristics that are crucial to how humans learn things,</p>
+  <ul>
+    <li>There is no supervisor</li>
+    <li>The feedback from the environment is delayed, not instantaneous </li>
+    <li>The experience is sequential, not i.i.d</li>
+    <li>Agent's actions affect the subsequent data it receives</li>
+  </ul>
+
+  <p>Reinforcement learning tries to address this by stating the problem in a slightly different way. In state of having a stateless, i.i.d dataset, assuming there's an agent with a set of actions $$\mathcal{A}$$. The agent starts at state $$s_0$$, At each timestep $$t$$, the agent pick an action $$a_t$$. Upon receiving the action $$a_t$$ from the agent, the environment returns an observation $$o_{t+1}$$ and the reward $$r_t$$. Upon receiving the reward $$r_t$$ and observation $$o_{t+1}$$, the agent ended up at a new state $$s_{t+1}$$, and the process keeps repeating. The objective of the agent is to maximize the cumulative reward $$g_t(s_0) = \sum^{\infty} \gamma^t r_t$$ starting at some initial state $$s_0$$</p>
+  
+  <figure><img src="learning.png" /></figure>
+
+  <aside>The strong assumption of reinforcement learning is the <b>reward hypothesis</b>, all goals can be described as maximization of some expected cumulative rewards.</aside>
+  
+  <a class="marker" href="#section-2" id="section-2"><span>2</span></a>
+  <h2>Markov Decision Process (MDP)</h2>
+
+  <p> A <b>Markov Decision process</b> is a simpler setup of a reinforcement learning problem. A <b>fully-observable</b> MDP is defined to be a tuple $$(S, A, P, r)$$, where </p>
+  <ul>
+    <li> $$S$$ is the set of finite states the agent can be in </li>
+    <li> $$A$$ is the set of finite actions the agent can take at time step $$t$$ </li>
+    <li> $$P(s, a, s') = P(s' | s,  a)$$ is the probability transition matrix of being in state $$s'$$ while in state $$s$$ and taking action $$a$$
+    <li> $$r(s, a, s')$$ is the reward of ending up in state $$s'$$ after taking action $$a$$ in state $$s$$
+    <li> <b>observable condition</b> both $$P$$ and $$r$$ are visible to the agent </li>
+  </ul>
+
+  <p>Notice that the last condition makes this a fully-observable MDP. Any methods used by the agent with these information is called model-based method, as opposed to model-free methods which don't exploit this information.</p>
+
+  <a class="marker" href="#section-3" id="section-3"><span>3</span></a>
+  <h2>Bellman equation and exact solution method</h2>
+  <p>It should be immediate to the astute readers that with full knowledge of the environment, we can construct a recursive formula describing the <b>dynamics</b> of the system. First, let's define some functions,</p>
+
+  <ul>
+    <li> $$\pi$$ is the <b>policy</b> of the agent, where $$\pi(a | s)$$ is the probability distribution over the action space given the current state is $$s$$</li>
+    <li> $$G_t = \sum^{\infty} \gamma^t R_t $$, a random variable describing total discounted rewards at time $$t$$ and initial state $$s$$. ($$R_t$$ is the random variable describing reward received at time $$t$$, note that this is different from $$r$$ the reward function)</li>
+    <li> $$v_{\pi}(s) = E[ G_t | S_t = s ]$$ is the state-value function describing the expected total discounted rewards of a state, if the agent follows policy $$\pi$$.
+    <li> $$q_{\pi}(s, a) = E[G_t| S_t = s, A_t = a ]$$, the action-value function describing the expected total discounted rewards of a state-action pair, if the agent follows policy $$\pi$$.
+  </ul>
+
+  <p>A recursive formula, a.k.a Bellman equation, can be immediately derived,</p>
+
+  <d-math block>
+    v_{\pi}(S_t) = E[G_t | S_t ] = E[\sum^{\infty} \gamma^t R_t | S_t  ]
+                      = E[R_t + \gamma G_{t+1} | S_t ]
+                      = E[R_t + \gamma v_{\pi}(S_{t+1}) | S_t]
+  </d-math>
+
+  <p>Similarly, for action-value function,</p>
+
+  <d-math block>
+    q_{\pi}(S_t, A_t) = E[G_t | S_t, A_t] = E[\sum^{\infty} \gamma^t R_t | S_t, A_t]
+                      = E[R_t + \gamma G_{t+1} | S_t, A_t]
+  </d-math>
+  <d-math block>
+                      = E[R_t + \gamma Q_{\pi}(S_{t+1}, A_{t+1}) | S_t, A_t]
+  </d-math>
+
+  <p>The Bellman expectation equation tells us the relationship between the action-value function and the state-value function,</p>
+
+  <d-math block>
+    v_{\pi}(s) = E_{\pi}[q_{\pi}(s, a) ] = \sum_{a \in A}  \pi (a | s) q_{\pi}(s, a)
+  </d-math>
+
+  and, 
+  <d-math block>
+    q_{\pi}(s, a) = \sum_{s' \in S} P(s, a, s') (R(s, a, s') + \gamma v_{\pi}(s'))
+  </d-math>
+
+  <p>So,</p>
+  <div class="l-middle">
+    <d-math block>
+      v_{\pi}(s) = E_{\pi}[q_{\pi}(s, a) ] = \sum_{a \in A}  \pi (a | s) q_{\pi}(s, a) =  \sum_{a \in A, s' \in S}  \pi (a | s) P(s, a, s') (R(s, a, s') + \gamma v_{\pi}(s'))
+    </d-math>
+  </div>
+
+
+
+
+
+</d-article>
+<d-appendix>
+  <d-bibliography src="bibliography.bib"></d-bibliography>
+</d-appendix>
+
+<distill-footer></distill-footer>
+
+</body>
