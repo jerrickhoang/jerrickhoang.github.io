@@ -57,7 +57,7 @@
 
   <p>Reinforcement learning tries to address this by stating the problem in a slightly different way. In state of having a stateless, i.i.d dataset, assuming there's an agent with a set of actions $$\mathcal{A}$$. The agent starts at state $$s_0$$, At each timestep $$t$$, the agent pick an action $$a_t$$. Upon receiving the action $$a_t$$ from the agent, the environment returns an observation $$o_{t+1}$$ and the reward $$r_t$$. Upon receiving the reward $$r_t$$ and observation $$o_{t+1}$$, the agent ended up at a new state $$s_{t+1}$$, and the process keeps repeating. The objective of the agent is to maximize the cumulative reward $$g_t(s_0) = \sum^{\infty} \gamma^t r_t$$ starting at some initial state $$s_0$$</p>
   
-  <figure><img src="learning.png" /></figure>
+  <figure><img src="learning.png" style="width:60%; height:60%; text-align:center; display:block; margin-left:auto; margin-right:auto"/></figure>
 
   <aside>The strong assumption of reinforcement learning is the <b>reward hypothesis</b>, all goals can be described as maximization of some expected cumulative rewards.</aside>
   
@@ -124,8 +124,80 @@
     \end{aligned}
   </d-math>
 
+  <p>This tells us that if we fix the policy $$\pi$$ we can use dynamic programming to work backward from the terminal state and find the value function (and action-value function) for all states and actions. The natural idea is to start with a random policy, then evaluate the value function with the equation above, then improve the new policy by acting greedily with respect to the value function, and repeat until convergence. This is called <b>Policy iteration</b> method. The idea can be demonstrated in the picture below,</p>
 
+  <figure><img src="policy_iter.png"/></figure>
 
+  <p>Similarly, if we know the optimal value function for all the subproblems $$v_{*}(s')$$, then we can find $$v_{*}(s)$$ by doing one-step look ahead, </p>
+  
+  <d-math block>
+  </d-math>
+  
+  <p>Therefore, we can also iterate directly on the value function. This is called the <b>Value iteration</b> method.</p>
+
+  <a class="marker" href="#section-3" id="section-3"><span>3</span></a>
+  <h2>Implementation</h2>
+
+  <p>The following code assumes we have access to <a href="https://github.com/yandexdataschool/Practical_RL/blob/master/week2_value_based/mdp.py"> MDP class</a>, all credit goes to Yandex school of datascience. First, let's implement <b>Value Iteration</b></p>
+
+  <h3>Value Iteration</h3>
+  <p>Let's recall the equations for value iteration</p>
+  <d-math block>
+    \begin{aligned}
+    q_{*}(s, a) &= \sum_{s' \in S} P(s, a, s') (R(s, a, s') + \gamma v_{*}(s')) \\
+    v_{*}(s) &= max_{a \in A} q_{*}(s, a) \\
+  \end{aligned}
+  </d-math>
+  <p>The first equation can be written in code as follows,</p>
+  <d-code block language="python">
+    def get_action_value(mdp, state_values, state, action, gamma):
+    """ Computes q(s,a) as in formula above """
+
+    res = 0
+    for s_prime in mdp.get_all_states():
+        prob = mdp.get_transition_prob(state, action, s_prime)
+        reward = mdp.get_reward(state, action, s_prime)
+        res += prob * (reward + gamma * state_values[s_prime])
+
+    return res
+
+  </d-code>
+
+  <p>The second equation can be written in the code as follows,</p>
+  <d-code block language="python">
+    def get_new_state_value(mdp, state_values, state, gamma):
+    """ Computes next V(s) as in formula above."""
+    if mdp.is_terminal(state):
+        return 0
+    optimal_action_value = 0
+    optimal_action = -1
+    for action in mdp.get_possible_actions(state):
+        q = get_action_value(mdp, state_values, state, action, gamma)
+        if q > optimal_action_value:
+            optimal_action_value = q
+            optimal_action = action
+    return optimal_action_value
+  </d-code>
+
+  <p>We can now keep iterating until the state values converge</p>
+  <d-code block language="python">
+  gamma = 0.9
+  state_values = {s : 0 for s in mdp.get_all_states()}
+
+  for i in range(100):
+      new_state_values = {state: get_new_state_value(mdp, state_values, state, gamma) 
+                          for state in mdp.get_all_states()}
+      diff = max(abs(new_state_values[s] - state_values[s]) for s in mdp.get_all_states())
+      state_values = new_state_values
+      if diff < 0.001:
+          print("Terminated")
+          break
+  </d-code>
+
+  <p>After having the optimal state value function (and state-action function), we can now construct an optimal strategy using, $$ \pi_{*}(s) = argmax_{a} q_{*}(s, a)$$</p>
+  <figure><img src="result.png" style="width:50%; height:50%; text-align:center; display:block; margin-left:auto; margin-right:auto"/></figure>
+
+  <h3>Policy Iteration</h3>
 
 
 
