@@ -97,11 +97,11 @@
   <p>Similarly, for action-value function,</p>
 
   <d-math block>
-    q_{\pi}(S_t, A_t) = E[G_t | S_t, A_t] = E[\sum^{\infty} \gamma^t R_t | S_t, A_t]
-                      = E[R_t + \gamma G_{t+1} | S_t, A_t]
-  </d-math>
-  <d-math block>
-                      = E[R_t + \gamma Q_{\pi}(S_{t+1}, A_{t+1}) | S_t, A_t]
+    \begin{aligned}
+    q_{\pi}(S_t, A_t) &= E[G_t | S_t, A_t] = E[\sum^{\infty} \gamma^t R_t | S_t, A_t] \\
+                      &= E[R_t + \gamma G_{t+1} | S_t, A_t] \\
+                      &= E[R_t + \gamma Q_{\pi}(S_{t+1}, A_{t+1}) | S_t, A_t] \\
+    \end{aligned}
   </d-math>
 
   <p>The Bellman expectation equation tells us the relationship between the action-value function and the state-value function,</p>
@@ -116,11 +116,14 @@
   </d-math>
 
   <p>So,</p>
-  <div class="l-middle">
-    <d-math block>
-      v_{\pi}(s) = E_{\pi}[q_{\pi}(s, a) ] = \sum_{a \in A}  \pi (a | s) q_{\pi}(s, a) =  \sum_{a \in A, s' \in S}  \pi (a | s) P(s, a, s') (R(s, a, s') + \gamma v_{\pi}(s'))
-    </d-math>
-  </div>
+  <d-math block>
+    \begin{aligned}
+    v_{\pi}(s) &= E_{\pi}[q_{\pi}(s, a) ] \\
+    &= \sum_{a \in A}  \pi (a | s) q_{\pi}(s, a) \\
+    &=  \sum_{a \in A, s' \in S}  \pi (a | s) P(s, a, s') (R(s, a, s') + \gamma v_{\pi}(s'))
+    \end{aligned}
+  </d-math>
+
 
 
 

@@ -73,27 +73,25 @@
 
   <p>Based on this insight, we can somewhat safely start with $$P(Z) = \mathcal{N}(0, I)$$. Plugging this back to the first equation gives, $$P(X) = \int P(X|z\sim\mathcal{N}(0, I))\mathcal{N}(0, I) dz$$. One approach to solve this integral is using the Monte Carlo approximation, $$ P(X) = \frac{1}{n}\sum_i P(X|Z=z_i) $$ However, for high dimensional problem, n must be extremely larg for this approximationto be close to ground truth. The key idea in variational method is that for the most part $$P(X|Z)$$ will be nearly zero. So, we want to look for the "important" region in the space of $$Z$$ by having another model $$Q_{\theta}(Z|X)$$ proposing the values of z that are likely to produce $$X$$, </p>
 
-  <div class="l-page-outset">
   <d-math block>
-     D_{KL}(Q_{\theta}(Z|X) || P(Z|X)) = E_{z\sim Q_{\theta}}[logQ_{\theta}(Z|X) - logP(Z|X)] 
-     = E_{z\sim Q_{\theta}}[logQ_{\theta}(Z|X) - log\frac{P(X|Z)P(Z)}{P(X)}]
-  </d-math>
-  
-   <d-math block>
-     = E_{z\sim Q_{\theta}}[logQ_{\theta}(Z|X) - logP(X|Z) - logP(Z) + logP(X)]
+    \begin{aligned}
+     D_{KL}(Q_{\theta}(Z|X) ||& P(Z|X)) = E_{z\sim Q_{\theta}}[logQ_{\theta}(Z|X) - logP(Z|X)] \\
+     &= E_{z\sim Q_{\theta}}[logQ_{\theta}(Z|X) - log\frac{P(X|Z)P(Z)}{P(X)}] \\
+     &= E_{z\sim Q_{\theta}}[logQ_{\theta}(Z|X) - logP(X|Z) - logP(Z) + logP(X)] \\
+     \end{aligned}
    </d-math>
 
    <br>
 
-   <d-math block>
-     \rightarrow logP(X) - \underbrace{D_{KL}(Q_{\theta}(Z|X) || P(Z|X))}_{\geq 0} = E_{z\sim Q_{\theta}}[logP(X|Z)]
-      - E_{z\sim Q_{\theta}}(logQ_{\theta}(Z|X) - logP(Z))
+   <div >
+   <d-math block >
+     \begin{aligned}
+     logP(X) &- \underbrace{D_{KL}(Q_{\theta}(Z|X) || P(Z|X))}_{\geq 0} \\
+     &= E_{z\sim Q_{\theta}}[logP(X|Z)] - E_{z\sim Q_{\theta}}(logQ_{\theta}(Z|X) - logP(Z)) \\
+     &= \underbrace{E_{z\sim Q_{\theta}}[logP(X|Z)] - D_{KL}(Q_{\theta}(Z|X) || P(Z))}_{\mathcal{L}(Q_{\theta}, Z, X)}
+     \end{aligned}
    </d-math>
-
-   <d-math block>
-     = \underbrace{E_{z\sim Q_{\theta}}[logP(X|Z)] - D_{KL}(Q_{\theta}(Z|X) || P(Z))}_{\mathcal{L}(Q_{\theta}, Z, X)}
-   </d-math>
-  </div>
+   </div>
 
   <p>Therefore, $$\mathcal{L}(Q_{\theta}, Z, X)$$ is the evidence lower bound (ELBO) of the marginal likelihood. Note, the variatonal lower bound can only be as good as our estimation of $$P(Z|X)$$ using $$Q_{\theta}(Z|X)$$. In summary, to estimate the <b>RHS</b>, we first need to estimate $$Q_{\theta}(Z|X)$$, sample $$z \sim Q_{\theta}(Z|X)$$, then estimate $$P(X|Z = z)$$. The first part is called the encoder which encodes the input into a hidden state. The second part is called the decoder, which given the hidden state, infers the input. The two parts combined is called autoencoder, (hence the name variational autoencoder).</p>
 
@@ -134,15 +132,15 @@
   </d-code>
 
   <p>Our objective is to maximize the evidence lower bound (ELBO),</p> 
-  <d-math>[ \mathcal{L}(Q_{\theta}, X, Z) = E_{x \sim D}[E_{z\sim Q_{\theta(Z|X=x)}}[logP(X|Z=z)] - D_{KL}(Q_{\theta}(Z|X=x) || P(Z))] ] </d-math>
+  <d-math>\mathcal{L}(Q_{\theta}, X, Z) = E_{x \sim D}[E_{z\sim Q_{\theta(Z|X=x)}}[logP(X|Z=z)] - D_{KL}(Q_{\theta}(Z|X=x) || P(Z))]</d-math>
   <p>So,</p> 
   <d-math>
-  \theta = \underset{\theta}{argmax} \mathcal{L}(Q_{\theta}, X, Z) = \underset{\theta}{argmin} - \mathcal{L}(Q_{\theta}, X, Z) = 
-  </d-math>
-  <d-math>
-  \underset{\theta}{argmin} E_{x\sim D}[E_{z\sim Q_{\theta}(Z|X=x)}[-logP(X|Z=z)] + D_{KL}(Q_{\theta}(Z|X=x)||P(Z))] 
-  </d-math>
-  <d-math>= \underset{\theta}{argmin} H(D, P(X|Z)) + D_{KL}(Q_{\theta}(Z|X)||P(Z))
+    \begin{aligned}
+    \theta &= \underset{\theta}{argmax} \mathcal{L}(Q_{\theta}, X, Z) \\
+           &= \underset{\theta}{argmin} - \mathcal{L}(Q_{\theta}, X, Z) \\
+           &= \underset{\theta}{argmin} E_{x\sim D}[E_{z\sim Q_{\theta}(Z|X=x)}[-logP(X|Z=z)] + D_{KL}(Q_{\theta}(Z|X=x)||P(Z))] \\
+           &= \underset{\theta}{argmin} H(D, P(X|Z)) + D_{KL}(Q_{\theta}(Z|X)||P(Z)) \\
+  \end{aligned}
   </d-math>
   <p> The implementation of the cross entropy can be as simple as, </p>
 
@@ -153,11 +151,12 @@
 
   <p>Since we assume Gaussian for $$P(Z)$$ and $$Q(Z)$$, the KL loss can be calculated in closed form,</p> 
   
-  <div class="l-page-outset">
   <d-math>
-  D_{KL}(Q_{\theta}(Z|X)||P(Z)) = D_{KL}(\mathcal{N}(\mu(X), \Sigma(X))||\mathcal{N}(0, I)) = \frac{1}{2}(tr(\Sigma(X)) + \mu(X)^T\mu(X) - k - \log \det(\Sigma(X)))
+  \begin{aligned}
+    D_{KL}(Q_{\theta}(Z|X)||P(Z)) &= D_{KL}(\mathcal{N}(\mu(X), \Sigma(X))||\mathcal{N}(0, I)) \\
+    &= \frac{1}{2}(tr(\Sigma(X)) + \mu(X)^T\mu(X) - k - \log \det(\Sigma(X)))
+  \end{aligned}
   </d-math>
-  </div>
 
   <d-code block language="python">
     self.kl_loss = tf.reduce_mean(0.5 * tf.reduce_sum(tf.exp(log_sigma) + 
