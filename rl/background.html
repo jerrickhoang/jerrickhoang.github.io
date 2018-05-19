@@ -198,6 +198,60 @@
   <figure><img src="result.png" style="width:50%; height:50%; text-align:center; display:block; margin-left:auto; margin-right:auto"/></figure>
 
   <h3>Policy Iteration</h3>
+  <p>For policy iteration, we start out with a random policy $$\pi$$. At each step, we evaluate $$v_{\pi}(s)$$using</p>
+  <d-math block>
+    v_{\pi}(s) = \sum_{a \in A, s' \in S} \pi(a | s) P(s, a, s') (R(s, a, s') + \gamma v_{\pi}(s'))
+  </d-math>
+
+  <p>This equation can be implemented as follows, </p>
+  <d-code block language="python">
+    def policy_eval(mdp, policy, gamma=0.9):
+      V = {s: 0 for s in mdp.get_all_states()}
+      while True:
+          delta = 0
+          for s in mdp.get_all_states():
+              v = 0
+              for action, action_prob in enumerate(policy[s]):
+                  for s_prime in mdp.get_all_states():
+                  prob = mdp.get_transition_prob(state, action, s_prime)
+                  reward = mdp.get_reward(state, action, s_prime)
+                  v += action_prob * prob * (reward + gamma * V[s_prime])
+              delta = max(delta, np.abs(v - V[s]))
+              V[s] = v
+          if delta < theta:
+              break
+      return V
+  </d-code>
+
+  <p>After computing the value function, we need to greedily improve the policy, </p>
+  <d-math>
+    \pi'(s) = argmax_{a} (\sum_{s' \in S} P(s, a, s') (R(s, a, s') + \gamma v_{\pi}(s')))
+  </d-math>
+
+  <d-code block language="python">
+    def policy_improvement(mdp, policy, gamma):
+      while True:
+          V = policy_eval_fn(policy, mdp, gamma)
+          policy_stable = True
+
+          for s in range(env.nS):
+              chosen_a = policy[s]
+
+              action_values = np.zeros(env.nA)
+              for a in mdp.get_possible_actions(s):
+                  for s_p in mdp.get_all_states():
+                      prob = mdp.get_transition_prob(s, a, s_p)
+                      reward = mdp.get_reward(s, a, s_p)
+                      action_values[a] += prob * (reward + gamma * V[s_p])
+              best_a = np.argmax(action_values)
+
+              if chosen_a != best_a:
+                  policy_stable = False
+              policy[s] = best_a
+
+          if policy_stable:
+              return policy, V
+  </d-code>
 
 
 
