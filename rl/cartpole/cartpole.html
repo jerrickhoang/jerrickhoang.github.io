@@ -1,0 +1,159 @@
+<!--
+  Copyright 2018 The Distill Template Authors
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+       http://www.apache.org/licenses/LICENSE-2.0
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!doctype html>
+
+<head>
+  <script src="https://distill.pub/template.v2.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" >
+  <meta charset="utf8">
+  <style></style>
+</head>
+
+<body>
+<d-front-matter>
+  <script id='distill-front-matter' type="text/json">{
+    "title": "Reinforcement Learning 2: Solving CartPole",
+    "published": "May 20, 2018",
+    "authors": [
+      {
+        "author":"Jerrick Hoang",
+        "authorURL":"https://jerrickhoang.github.io/",
+        "affiliation":"Uber ATG",
+        "affiliationURL":"https://www.uber.com/info/atg"
+      }
+    ],
+    "katex": {
+      "delimiters": [
+        {"left": "$$", "right": "$$", "display": false} ]
+    }
+  }</script>
+</d-front-matter>
+<d-title>
+  <!-- <figure style="grid-column: page; margin: 1rem 0;"><img src="cover.png" style="width:100%; border: 1px solid rgba(0, 0, 0, 0.2);"/></figure> -->
+  <p>Lorem ipsum</p>
+
+</d-title>
+<d-article>
+  <a class="marker" href="#section-1" id="section-1"><span>1</span></a>
+  <h2>The CartPole-V0 environment</h2>
+
+  <p> The <a href="https://gym.openai.com/envs/CartPole-v0/">CartPole</a> environment is a continuous state space, discrete action space environment. The environment is described in details in this <a href="https://github.com/openai/gym/wiki/CartPole-v0">link</a></p>
+
+  <d-code block language="python">
+    env = gym.make("CartPole-v0").env
+
+    env.reset()
+    n_actions = env.action_space.n # 2 actions, 0 for going left, 1 for going right
+
+    plt.imshow(env.render("rgb_array"))
+  </d-code>
+
+  <figure><img src="reset.png"/></figure>
+  <p>Let's write some common framework to run and evaluate different methods. First, we need a function that runs a cart-pole episode given a policy function,</p>
+
+  <d-code block language="python">
+    def run_episode(env, policy_fn, t_max=10**4):
+      """Play game until end or for t_max ticks.
+      """
+      states,actions = [], []
+      total_reward = 0.
+      s = env.reset()
+
+      for t in range(t_max):
+          a = policy_fn(env, s)
+
+          new_s, r, done, info = env.step(a)
+
+          states.append(s)
+          actions.append(a)
+          total_reward+=r
+
+          s = new_s
+          if done:
+              break
+      return states, actions, total_reward
+  </d-code>
+
+  <p>The definition of solving CartPole is defined as "getting average reward of 195.0 over 100 consecutive trials". We will use several metrics to compare different methods. For each method, we will look at min/max/average/median number of episodes needed before solving the problem. We will also look at average reward over the first 100 iterations. Let's begin our exploration</p>
+  
+  <a class="marker" href="#section-2" id="section-2"><span>2</span></a>
+  <h2>Random Action</h2>
+
+  <p>We start out by doing the most simple thing possible: randomly generate 10,000 configurations of a model's parameters, and pick the one that achieves the best cumulative reward. As noted in previous section, the state space is 4 dimensional, containing the cart position, cart velocity, pole angle, and pole velocity at tip. The simplest model we can use is a linear model,</p>
+
+  <d-math block>
+    a =\begin{cases}
+    0 & W^T s \le 0. \\
+    1 & W^T s \geq 0
+    \end{cases}, \qquad W \in [-1, 1]^4
+  </d-math>
+
+  <d-code block language="python">
+    def policy_random(env, s, W):
+      action = 0 if np.matmul(W, s) < 0 else 1
+      return action
+  </d-code>
+  
+  <a class="marker" href="#section-3" id="section-3"><span>3</span></a>
+  <h2>Hill Climbing</h2>
+
+  <a class="marker" href="#section-4" id="section-4"><span>3</span></a>
+  <h2>Cross Entropy Method (CEM)</h2>
+
+  <p>CEM is a natural-inspired algorithm. The idea is modeling the natural selection process where the members who best adapted to the environment survive and transmit their genetics to skew the distribution towards generating more similar genes. We start out having a random population (random policy) and a fitness function measuring the quality of the population (reward function). At each iteration, we select the most elite members of the population (select the best state-action pairs that have the highest reward), and change our policy to be producing more of these pairs.</p>
+
+  <p>We first need to write a function that selects the most elite members from a population. Given a batch of states, actions and rewards, select the top p-percentile state-action pairs</p>
+
+  <d-code block language="python">
+    def select_elites(states_batch, actions_batch, rewards_batch, percentile=50):
+      reward_threshold = np.percentile(rewards_batch, percentile)
+      states = []
+      elite_states  = []
+      elite_actions = []
+      for i in range(len(rewards_batch)):
+          if rewards_batch[i] >= reward_threshold:
+              elite_states.extend(states_batch[i])
+              elite_actions.extend(actions_batch[i])
+
+      return elite_states,elite_actions
+  </d-code>
+
+  <p>After selecting the most elite state-action pairs, we want to update our policy to skew towards producing these pairs more often. In otherwords, if $$(s_t, a_t)$$ is an elite pair, we want to produce $$a_t$$ at $$s_t$$ with higher probability. However, since CartPole has a continuous state space, we can't simply keep a table of state -> probability distribution. We can, however, treat this as a supervised learning problem and <b>approximate</b> the policy using these pairs as training samples.</p>
+
+  <d-code block language="python">
+    from sklearn.neural_network import MLPClassifier
+    agent = MLPClassifier(hidden_layer_sizes=(20,20),
+                          activation='tanh',
+                          warm_start=True,
+                          max_iter=1)
+    # Initialize dimension of the MLP
+    agent.fit([env.reset()] * n_actions, range(n_actions));
+
+    Training loop ..
+
+      elite_states, elite_actions = select_elites(states_batch, actions_batch, rewards_batch, percentile=percentile)
+
+      agent.fit(elite_states, elite_actions)
+  </d-code>
+
+
+
+
+</d-article>
+<d-appendix>
+  <d-bibliography src="bibliography.bib"></d-bibliography>
+</d-appendix>
+
+<distill-footer></distill-footer>
+
+</body>
