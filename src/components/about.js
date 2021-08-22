@@ -7,7 +7,7 @@ import { color, fontSize } from 'styles/theme'
 
 import TwoColumns from 'components/twoColumns'
 import SectionHeading from 'components/sectionHeading'
-import { Parallax } from 'react-skrollr'
+// import { Parallax } from 'react-skrollr'
 import Avatar from '../img/avatar'
 
 
@@ -35,12 +35,12 @@ const Div = styled.div`
 
 const About = () => {
   return (
-    <Parallax 
-      data={{
-        'data-center-center': 'opacity: 1;',
-        'data-bottom-top': 'opacity: 0.5',
-      }}
-    >
+    // <Parallax 
+    //   data={{
+    //     'data-center-center': 'opacity: 1;',
+    //     'data-bottom-top': 'opacity: 0.5',
+    //   }}
+    // >
     <TwoColumns
       leftColumn={
         <Div>
@@ -71,7 +71,7 @@ const About = () => {
         </Fragment>
       }
     />
-    </Parallax>
+    // </Parallax>
 
   )
 }

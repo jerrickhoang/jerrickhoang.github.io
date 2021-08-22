@@ -12,7 +12,7 @@ import TrafficGraphNetLogo from 'img/trafficgraphnetlogo'
 import JointLogo from 'img/joint'
 import PatentLogo from 'img/patentlogo'
 
-import { Parallax } from 'react-skrollr'
+// import { Parallax } from 'react-skrollr'
 
 
 const PPNetLink = <Link to="https://arxiv.org/abs/2104.14679">Read More</Link>
@@ -24,12 +24,12 @@ const JointInteractionNetLink = <Link to="https://arxiv.org/abs/1912.07882">Read
 
 const Publication = () => {
   return (
-    <Parallax 
-      data={{
-        'data-center-center': 'opacity: 1;',
-        'data-bottom-top': 'opacity: 0.8',
-      }}
-    >
+    // <Parallax 
+    //   data={{
+    //     'data-center-center': 'opacity: 1;',
+    //     'data-bottom-top': 'opacity: 0.8',
+    //   }}
+    // >
     <TwoColumns
       wide
       leftColumn={<SectionHeading>Publications</SectionHeading>}
@@ -73,7 +73,7 @@ const Publication = () => {
         </Fragment>
       }
     />
-    </Parallax>
+    // </Parallax>
   )
 }
 
