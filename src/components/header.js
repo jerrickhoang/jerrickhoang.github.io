@@ -163,13 +163,15 @@ const TooltipText = styled.div`
   color: ${(props) => props.theme? color.grey500: color.grey900};
 `
 
+const isBrowser = typeof window !== "undefined"
+
 const Header = (props) => {
   const [tooltipIsVisible, setTooltipIsVisible] = useState(false)
   const [tooltipText, setTooltipText] = useState('')
   var [useDarkTheme, setDarkTheme] = useState(false)
 
   const handleScroll = useCallback(event => {
-    if (window.scrollY >= 700) {
+    if (isBrowser && window.scrollY >= 700) {
       setDarkTheme(true)
     } else {
       setDarkTheme(false)
