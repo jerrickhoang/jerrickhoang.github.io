@@ -171,18 +171,26 @@ const Header = (props) => {
   var [useDarkTheme, setDarkTheme] = useState(false)
 
   const handleScroll = useCallback(event => {
-    if (isBrowser && window.scrollY >= 700) {
-      setDarkTheme(true)
-    } else {
-      setDarkTheme(false)
+    if (isBrowser)
+    {
+      if (isBrowser && window.scrollY >= 700) {
+        setDarkTheme(true)
+      } else {
+        setDarkTheme(false)
+      }
     }
+
   }, []);
 
   useEffect(() => {
-    window.addEventListener("scroll", handleScroll);
-    return () => {
-      window.removeEventListener("scroll", handleScroll);
-    };
+    if (isBrowser)
+    {
+      window.addEventListener("scroll", handleScroll);
+      return () => {
+        window.removeEventListener("scroll", handleScroll);
+      };
+    }
+
   }, [handleScroll]);
 
   // useEffect(() => {
