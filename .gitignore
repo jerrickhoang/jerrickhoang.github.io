@@ -1,3 +1,10 @@
+public/app-*
+public/commons-*
+public/component-*
+public/framework-*
+public/polyfill-*
+public/webpack-runtime-*
+
 _site/*
 .cache/*
 
