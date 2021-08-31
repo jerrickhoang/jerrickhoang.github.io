@@ -1,1 +1,0 @@
-# jerrickhoang.github.io
