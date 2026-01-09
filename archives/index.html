@@ -1,0 +1,25 @@
+---
+layout: default
+title: Archives
+---
+
+<div class="container">
+  <h1>Archives</h1>
+  {% assign posts_by_year = site.posts | group_by_exp: 'post', 'post.date | date: "%Y"' %}
+  {% for year in posts_by_year %}
+    <section class="year-section">
+      <h2 class="year-title">{{ year.name }}</h2>
+      <div class="archives-post-list">
+        {% for post in year.items %}
+          <article class="archives-post-item">
+            <time class="archives-post-date" datetime="{{ post.date | date: '%Y-%m-%d' }}">
+              {{ post.date | date: "%b %d" }}
+            </time>
+            <a href="{{ post.url | relative_url }}" class="archives-post-title">{{ post.title }}</a>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+</div>
+

@@ -1,0 +1,40 @@
+# Site Settings
+title: Jerrick Hoang
+description: Personal blog of Jerrick Hoang - ML/Robotics Engineer
+url: https://jerrickhoang.github.io
+baseurl: ""
+
+# Author
+author:
+  name: Jerrick Hoang
+  email: jerrickhoang@gmail.com
+  twitter: jerrick93
+
+# Build Settings
+markdown: kramdown
+highlighter: rouge
+permalink: /:categories/:year/:month/:day/:title/
+timezone: America/Los_Angeles
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+
+# Exclude
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
+
+# Collections
+collections:
+  categories:
+    output: true
+  tags:
+    output: true
+

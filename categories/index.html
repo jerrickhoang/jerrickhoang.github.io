@@ -1,0 +1,43 @@
+---
+layout: default
+title: Categories
+---
+
+<div class="container">
+  <h1>Categories</h1>
+  <div class="category-grid">
+    {% assign categories = site.posts | map: 'category' | uniq | compact | sort %}
+    {% for category in categories %}
+      {% assign posts_in_category = site.posts | where: 'category', category %}
+      <a href="#{{ category | downcase | replace: ' ', '-' }}" class="category-card">
+        <h2 class="category-name">{{ category }}</h2>
+        <p class="category-count">{{ posts_in_category.size }} {% if posts_in_category.size == 1 %}post{% else %}posts{% endif %}</p>
+      </a>
+    {% endfor %}
+  </div>
+
+  {% for category in categories %}
+    <section id="{{ category | downcase | replace: ' ', '-' }}" style="margin-top: 64px;">
+      <h2 class="year-title">{{ category }}</h2>
+      <div class="post-list">
+        {% assign category_posts = site.posts | where: 'category', category %}
+        {% for post in category_posts %}
+          <article class="post-item">
+            <h2 class="post-title">
+              <a href="{{ post.url | relative_url }}">{{ post.title }}</a>
+            </h2>
+            <div class="post-meta">
+              <time class="post-date" datetime="{{ post.date | date: '%Y-%m-%d' }}">
+                {{ post.date | date: "%B %d, %Y" }}
+              </time>
+            </div>
+            {% if post.description %}
+              <p class="post-excerpt">{{ post.description }}</p>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+</div>
+

@@ -1,0 +1,33 @@
+---
+layout: default
+---
+
+<div class="container">
+  <section class="hero">
+    <h1 class="hero-title">Jerrick Hoang</h1>
+    <p class="hero-subtitle">ML/Robotics Engineer at Cruise. Working on trajectory prediction and planning for autonomous vehicles. Previously at CMU's Auton Lab and Vector Institute.</p>
+  </section>
+
+  <div class="post-list">
+    {% for post in site.posts %}
+      <article class="post-item">
+        <h2 class="post-title">
+          <a href="{{ post.url | relative_url }}">{{ post.title }}</a>
+        </h2>
+        <div class="post-meta">
+          <time class="post-date" datetime="{{ post.date | date: '%Y-%m-%d' }}">
+            {{ post.date | date: "%B %d, %Y" }}
+          </time>
+          {% if post.category %}
+            <a href="{{ '/categories' | relative_url }}/#{{ post.category | downcase | replace: ' ', '-' }}" class="category-link">{{ post.category }}</a>
+          {% endif %}
+        </div>
+        {% if post.description %}
+          <p class="post-excerpt">{{ post.description }}</p>
+        {% endif %}
+        <a href="{{ post.url | relative_url }}" class="read-more">Read more →</a>
+      </article>
+    {% endfor %}
+  </div>
+</div>
+

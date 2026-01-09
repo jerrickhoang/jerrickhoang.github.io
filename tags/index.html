@@ -1,0 +1,43 @@
+---
+layout: default
+title: Tags
+---
+
+<div class="container">
+  <h1>Tags</h1>
+  <div class="tag-cloud">
+    {% assign all_tags = site.posts | map: 'tags' | flatten | uniq | compact | sort %}
+    {% for tag in all_tags %}
+      {% assign posts_with_tag = site.posts | where_exp: 'post', 'post.tags contains tag' %}
+      <a href="#{{ tag | downcase | replace: ' ', '-' }}" class="tag-link">
+        #{{ tag }}
+        <span class="tag-count">({{ posts_with_tag.size }})</span>
+      </a>
+    {% endfor %}
+  </div>
+
+  {% for tag in all_tags %}
+    <section id="{{ tag | downcase | replace: ' ', '-' }}" style="margin-top: 64px;">
+      <h2 class="year-title">Tag: #{{ tag }}</h2>
+      <div class="post-list">
+        {% assign tag_posts = site.posts | where_exp: 'post', 'post.tags contains tag' %}
+        {% for post in tag_posts %}
+          <article class="post-item">
+            <h2 class="post-title">
+              <a href="{{ post.url | relative_url }}">{{ post.title }}</a>
+            </h2>
+            <div class="post-meta">
+              <time class="post-date" datetime="{{ post.date | date: '%Y-%m-%d' }}">
+                {{ post.date | date: "%B %d, %Y" }}
+              </time>
+            </div>
+            {% if post.description %}
+              <p class="post-excerpt">{{ post.description }}</p>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+</div>
+
