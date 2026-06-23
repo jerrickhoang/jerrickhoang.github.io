@@ -357,6 +357,15 @@ a:hover {
   line-height: 1.7;
 }
 
+.post-content h1 {
+  font-size: 40px;
+  margin-top: 72px;
+  margin-bottom: 16px;
+  padding-top: 36px;
+  border-top: 2px solid var(--grey200);
+  scroll-margin-top: 100px;
+}
+
 .post-content h2 {
   margin-top: 48px;
   margin-bottom: 16px;
@@ -421,8 +430,16 @@ a:hover {
   color: var(--grey900);
 }
 
-.toc-h3 a {
-  padding-left: 26px;
+.toc-depth-0 a {
+  padding-left: 14px;
+}
+
+.toc-depth-1 a {
+  padding-left: 28px;
+}
+
+.toc-depth-2 a {
+  padding-left: 42px;
   font-size: 13px;
   color: var(--grey500);
 }

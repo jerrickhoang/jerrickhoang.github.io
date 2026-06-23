@@ -37,8 +37,12 @@ layout: default
     var toc = document.getElementById('post-toc');
     if (!content || !toc) return;
 
-    var headings = content.querySelectorAll('h2, h3');
+    var headings = content.querySelectorAll('h1, h2, h3');
     if (headings.length < 2) { toc.style.display = 'none'; return; }
+
+    var minLevel = Math.min.apply(null, Array.prototype.map.call(headings, function (h) {
+      return parseInt(h.tagName.charAt(1), 10);
+    }));
 
     var title = document.createElement('div');
     title.className = 'toc-title';
@@ -54,7 +58,7 @@ layout: default
         h.id = h.textContent.trim().toLowerCase().replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
       }
       var li = document.createElement('li');
-      li.className = 'toc-item toc-' + h.tagName.toLowerCase();
+      li.className = 'toc-item toc-depth-' + (parseInt(h.tagName.charAt(1), 10) - minLevel);
       var a = document.createElement('a');
       a.href = '#' + h.id;
       a.textContent = h.textContent;
