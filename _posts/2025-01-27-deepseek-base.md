@@ -8,6 +8,10 @@ category: "Machine Learning"
 tags: ["llm", "deepseek", "transformers", "mixture-of-experts", "attention", "from-scratch"]
 ---
 
+> **Changelog**
+>
+> - **2026-01-01** — Published a companion post, [Policy Gradients: From REINFORCE to GRPO and Friends](https://jerrickhoang.github.io/machine%20learning/2026/01/01/rl/), which derives the full policy-gradient lineage (REINFORCE → PPO → GRPO and its variants) behind the RL algorithm used here. It’s linked from the [GRPO section](#group-relative-policy-optimization-grpo) below.
+
 This document assumes that readers are familiar with vanilla GPT2/3 architectures and somewhat familiar with LLAMA2 family of models. We will build on top of these architectures.
 
 # DeepSeekV1
@@ -852,7 +856,7 @@ That’s the whole trick. The group mean *is* the baseline, a Monte Carlo estima
 
 $$\mathcal{L}_{\mathrm{GRPO}} = \mathbb{E}\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{\lvert o_i \rvert}\sum_{t}\min\left(r_{i,t}\hat{A}_i,\ \mathrm{clip}(r_{i,t},\, 1-\epsilon,\, 1+\epsilon)\hat{A}_i\right) - \beta\, D_{\mathrm{KL}}(\pi_\theta \,\Vert\, \pi_{\mathrm{ref}})\right]$$
 
-The trade GRPO makes is a learned critic in exchange for more samples per prompt, and for LLMs that’s a great deal: sampling completions is cheap and embarrassingly parallel, whereas fitting a reliable value head is neither. It also pairs naturally with verifiable rewards (math, code) where you can score a whole group of answers automatically, which is exactly the regime where the DeepSeek reasoning models shine. I’ve written up the full lineage from REINFORCE through PPO to GRPO and its variants (DAPO, Dr. GRPO, GSPO) in a separate post if you want the policy-gradient derivations end to end; I’ll go through an actual implementation when I get to the post-training writeup.
+The trade GRPO makes is a learned critic in exchange for more samples per prompt, and for LLMs that’s a great deal: sampling completions is cheap and embarrassingly parallel, whereas fitting a reliable value head is neither. It also pairs naturally with verifiable rewards (math, code) where you can score a whole group of answers automatically, which is exactly the regime where the DeepSeek reasoning models shine. I’ve written up the full lineage from REINFORCE through PPO to GRPO and its variants (DAPO, Dr. GRPO, GSPO) in a separate post, [Policy Gradients: From REINFORCE to GRPO and Friends](https://jerrickhoang.github.io/machine%20learning/2026/01/01/rl/), if you want the policy-gradient derivations end to end; I’ll go through an actual implementation when I get to the post-training writeup.
 
 ## Let’s write the code
 
