@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "From Scratch #1: Speculative Decoding"
+title: "From Scratch #2: Speculative Decoding"
 date: 2026-01-08
 description: "Implementing speculative decoding from scratch in PyTorch: the draft/target setup, rejection sampling, a proof that the output distribution is exactly the target's, and benchmarks across k."
 category: "Machine Learning"
