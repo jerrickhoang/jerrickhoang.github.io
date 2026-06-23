@@ -23,6 +23,7 @@ plugins:
 
 # Exclude
 exclude:
+  - AUTHORING_NOTES.md
   - Gemfile
   - Gemfile.lock
   - node_modules
