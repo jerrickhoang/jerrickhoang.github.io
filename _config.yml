@@ -1,14 +1,30 @@
 # Site Settings
 title: Jerrick Hoang
-description: Personal blog of Jerrick Hoang - ML/Robotics Engineer
+tagline: Notes on ML, LLMs, and robotics
+description: Personal blog of Jerrick Hoang - ML/Robotics Engineer writing notes on machine learning, LLMs, and robotics.
 url: https://jerrickhoang.github.io
 baseurl: ""
+lang: en
 
 # Author
 author:
   name: Jerrick Hoang
   email: jerrickhoang@gmail.com
   twitter: jerrick93
+
+# SEO / social (used by jekyll-seo-tag for meta tags + JSON-LD)
+twitter:
+  username: jerrick93
+  card: summary
+social:
+  name: Jerrick Hoang
+  links:
+    - https://github.com/jerrickhoang
+    - https://twitter.com/jerrick93
+    - https://scholar.google.com/citations?user=jXxwlbMAAAAJ
+
+# Google Search Console verification (jekyll-seo-tag reads this automatically).
+google_site_verification: "TS7O_lfBOBijrHfsAhVLjtwsvThEVes21_84gH97ScE"
 
 # Build Settings
 markdown: kramdown
@@ -20,6 +36,7 @@ timezone: America/Los_Angeles
 plugins:
   - jekyll-feed
   - jekyll-sitemap
+  - jekyll-seo-tag
 
 # Exclude
 exclude:
