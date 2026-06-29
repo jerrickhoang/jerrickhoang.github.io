@@ -15,25 +15,41 @@ First, let’s understand at a high level what diffusion is. I wrote a blog post
 
 ## Diffusion
 
-The whole idea behind diffusion is almost embarrassingly simple once you strip away the math: generating a sample is hard, but *destroying* one is trivial. So instead of trying to learn how to go from nothing to a clean image (or sentence) in one shot, we learn how to undo a tiny bit of damage, and then we apply that little skill over and over again.
+The whole idea behind diffusion is quite simple once you strip away the math: generating a sample is hard, but *destroying* one is trivial. So instead of trying to learn how to go from nothing to a clean image (or sentence) in one shot, we learn how to undo a tiny bit of damage, and then we apply that little skill over and over again.
 
 Concretely, take a real data point $x_0$, say an image, and slowly corrupt it by mixing in Gaussian noise. After one step it’s slightly grainy, after a few hundred steps it’s indistinguishable from pure static. This is the *forward process*, and the nice thing is that it’s fixed and known, there’s nothing to learn here. We’re just defining a schedule that walks $x_0$ all the way out to a $\mathcal{N}(0, I)$ blob,
 
 $$x_t = \alpha(t)\, x_0 + \beta(t)\, \varepsilon, \quad \varepsilon \sim \mathcal{N}(0, I),$$
 
-where $t$ runs from “clean data” to “pure noise” and $\alpha, \beta$ are just the knobs that say how much signal vs. noise survives at time $t$. You’ll often see the same process written one step at a time instead, as a transition kernel $q(x_t \mid x_{t-1}) = \mathcal{N}(\sqrt{1-\beta_t}\,x_{t-1}, \beta_t I)$ (this is the form in the figure below); chaining those little Gaussian steps together is exactly what produces the marginal $x_t$ given $x_0$ above. The marginal is just the more convenient view when we want a single jump from clean data to noise level $t$.
+where $t$ runs from “clean data” to “pure noise” and $\alpha, \beta$ are just the knobs that say how much signal vs. noise survives at time $t$. You’ll often see the same process written one step at a time instead, as a transition kernel that adds a sliver of noise and shrinks the signal by a hair,
+
+$$q(x_t \mid x_{t-1}) = \mathcal{N}\!\big(\sqrt{1-\beta_t}\,x_{t-1},\; \beta_t I\big),$$
+
+where $\beta_t$ is a small per-step variance. These two views are the same process at different zoom levels, and the bridge between them is where the $\sqrt{\cdot}$ factors come from. Because a Gaussian step composed with another Gaussian step is again Gaussian, you can chain $t$ of these and collapse the whole chain into a single jump. Define the surviving-signal fraction $\bar\alpha_t = \prod_{s=1}^{t}(1-\beta_s)$; then unrolling the recursion gives the closed form
+
+$$x_t = \sqrt{\bar\alpha_t}\;x_0 + \sqrt{1-\bar\alpha_t}\;\varepsilon, \quad \varepsilon \sim \mathcal{N}(0, I),$$
+
+which is exactly the marginal above with $\alpha(t) = \sqrt{\bar\alpha_t}$ and $\beta(t) = \sqrt{1-\bar\alpha_t}$ (and note the two coefficients satisfy $\alpha(t)^2 + \beta(t)^2 = 1$, so this particular schedule keeps the total variance fixed, the *variance-preserving* convention). The per-step kernel is the right object when you reason about the reverse process, which also moves one step at a time; the marginal is the convenient one for training, where we want to jump straight to noise level $t$ in a single draw rather than simulating $t$ tiny steps.
 
 The interesting part is the *reverse process*. If we could learn to take a slightly-noisier $x_t$ and produce a slightly-cleaner $x_{t-1}$, then we could start from pure static, apply that denoising step a few hundred times, and arrive at something that looks like real data. The bet diffusion makes is that this per-step problem is *easy* even though the end-to-end problem (static → photo in one jump) is wildly hard. Each step only has to remove a little noise, and a neural network is perfectly happy to learn that.
 
 ![Diffusion as a forward and reverse process. Top: forward diffusion gradually adds small amounts of Gaussian noise to a clean image $x_0$ over steps $t = 0 \ldots T$ until it becomes $\mathcal{N}(0, I)$ noise, with per-step kernel $q(x_t \mid x_{t-1}) = \mathcal{N}(\sqrt{1-\beta_t}\,x_{t-1}, \beta_t I)$. Bottom: reverse diffusion learns $p_\theta(x_{t-1} \mid x_t)$ (predicting the noise / denoising direction) to walk from noise back to a clean sample.](/assets/images/diffusion-llm/diffusion.png)
 
-So what does the network actually predict? You’ll see a few equivalent framings in the literature, but they’re all the same object wearing different hats:
+So what does the network actually predict? Here the literature looks more fragmented than it really is: you will see three different training targets, and they are all the same object wearing different hats. The reason is the marginal $x_t = \alpha(t)\,x_0 + \beta(t)\,\varepsilon$ itself: it ties together three quantities, the clean data $x_0$, the noise $\varepsilon$, and the noisy point $x_t$ the network is fed. Hold $x_t$ fixed (it is the input), and knowing any one of the other two pins down the third, so a network that predicts one of them implicitly predicts all of them.
 
-- predict the noise $\varepsilon$ that was added (the DDPM ([Ho et al., 2020](#ref-ddpm)) view),
-- predict the clean $x_0$ directly,
-- predict the *score* $\nabla_{x} \log p(x_t)$, the direction in which the data becomes more likely.
+- **Predict the noise $\varepsilon$** (the DDPM ([Ho et al., 2020](#ref-ddpm)) view). The network $\varepsilon_\theta(x_t, t)$ is asked: of the stuff I’m looking at, which part is the Gaussian junk that got added? This is the most common parameterization in practice, because the target $\varepsilon$ is a unit-variance Gaussian at *every* noise level, so the regression targets stay nicely scaled and the loss is well-behaved across $t$. Subtract the predicted noise and what remains is your estimate of the signal.
 
-Given any one of these you can recover the others, since they’re related by the schedule $(\alpha, \beta)$. The score view is the one I find most intuitive: at every noise level the model is just learning “which way is uphill toward real data,” and sampling is repeatedly taking small steps uphill while peeling off noise.
+- **Predict the clean data $x_0$**. Here $x_\theta(x_t, t)$ tries to jump straight to the denoised answer: "given this corrupted thing, what was the original?". It is the most intuitive target and tends to behave better at high noise (near $t = 1$ almost no signal is left, and asking for the whole $x_0$ is better conditioned than asking for a tiny residual). It carries exactly the same information as the $\varepsilon$ target, just algebraically rearranged from the marginal: $x_0 = (x_t - \beta\,\varepsilon)/\alpha$, and conversely $\varepsilon = (x_t - \alpha\,x_0)/\beta$.
+
+- **Predict the score $\nabla_{x_t} \log p(x_t)$**. This is the gradient of the log-density of *noisy* data, i.e. the direction in $x_t$-space that makes the current point more probable under the (noised) data distribution, "which way is uphill toward real data". It is the most theoretically central of the three, because it is exactly the quantity the reverse-time SDE and the probability-flow ODE need in order to run. And it is again the same object: for a Gaussian forward process the score is just the negative, rescaled noise, $\nabla_{x_t} \log p(x_t) = -\,\mathbb{E}[\varepsilon \mid x_t]\,/\,\beta(t)$, so a noise predictor *is* a score predictor up to the constant factor $-1/\beta(t)$.
+
+The bridge that makes the "$x_0$" and "score" views interchangeable (in expectation) is Tweedie's formula,
+
+$$\mathbb{E}[x_0 \mid x_t] = \frac{x_t + \beta(t)^2\,\nabla_{x_t}\log p(x_t)}{\alpha(t)},$$
+
+which is just the three relations above with the expectation taken over which clean point could have produced this $x_t$. So you can genuinely pick whichever target is convenient and convert at the end; the choice changes the loss scaling and numerical conditioning, not what is being learned. In practice people train the $\varepsilon$ or $x_0$ head and read off the score when they need it for sampling.
+
+The score view is the one I find most intuitive: at every noise level the model is learning a vector field that points "uphill toward real data," and sampling is repeatedly stepping along it while peeling off noise.
 
 If you want the careful version of all this, the SDE that the forward process secretly is, the reverse-time SDE, and the probability-flow ODE that shares its marginals, I worked through it in [my earlier post on diffusion probabilities]({% post_url 2025-05-03-probabilities-diffusion %}). For this post the picture above is enough: **diffusion learns a vector field that pushes noise back toward data, one small step at a time.**
 
