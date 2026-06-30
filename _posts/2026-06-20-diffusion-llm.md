@@ -21,7 +21,7 @@ Concretely, take a real data point $x_0$, say an image, and slowly corrupt it by
 
 $$x_t = \alpha(t)\, x_0 + \beta(t)\, \varepsilon, \quad \varepsilon \sim \mathcal{N}(0, I),$$
 
-where $t$ runs from “clean data” to “pure noise” and $\alpha, \beta$ are just the knobs that say how much signal vs. noise survives at time $t$. You’ll often see the same process written one step at a time instead, as a transition kernel that adds a sliver of noise and shrinks the signal by a hair,
+where $t$ runs from “clean data” to “pure noise” and $\alpha, \beta$ are just the knobs that say how much signal vs. noise survives at time $t$. This rule, the function that sets how much corruption to apply at each $t$, is called the *schedule*, and it is a fixed design choice, not something we learn. You’ll often see the same process written one step at a time instead, as a transition kernel that adds a sliver of noise and shrinks the signal by a hair,
 
 $$q(x_t \mid x_{t-1}) = \mathcal{N}\!\big(\sqrt{1-\beta_t}\,x_{t-1},\; \beta_t I\big),$$
 
@@ -31,25 +31,114 @@ $$x_t = \sqrt{\bar\alpha_t}\;x_0 + \sqrt{1-\bar\alpha_t}\;\varepsilon, \quad \va
 
 which is exactly the marginal above with $\alpha(t) = \sqrt{\bar\alpha_t}$ and $\beta(t) = \sqrt{1-\bar\alpha_t}$ (and note the two coefficients satisfy $\alpha(t)^2 + \beta(t)^2 = 1$, so this particular schedule keeps the total variance fixed, the *variance-preserving* convention). The per-step kernel is the right object when you reason about the reverse process, which also moves one step at a time; the marginal is the convenient one for training, where we want to jump straight to noise level $t$ in a single draw rather than simulating $t$ tiny steps.
 
+```python
+def q_sample(x0, t, alpha, beta):
+    """Draw a noised sample x_t ~ q(x_t | x_0) from the closed-form marginal.
+
+    x0    : (B, C, H, W)   a batch of clean images
+    t     : (B,)           one timestep index per sample
+    alpha : (T,)           schedule, alpha[t] = sqrt(alpha_bar_t)      (signal fraction)
+    beta  : (T,)           schedule, beta[t]  = sqrt(1 - alpha_bar_t)  (noise fraction)
+    """
+    eps = torch.randn_like(x0)         # (B, C, H, W)  standard Gaussian noise
+    a = alpha[t].view(-1, 1, 1, 1)     # (B, 1, 1, 1)  broadcast the per-sample scalar over C,H,W
+    b = beta[t].view(-1, 1, 1, 1)      # (B, 1, 1, 1)
+    x_t = a * x0 + b * eps             # (B, C, H, W)  x_t = alpha*x0 + beta*eps
+    return x_t, eps                    # return eps too: it is the training target below
+
+# Example of how the foward and backward process are integrated together.
+def train(model, data_loader, alpha, beta, opt):
+    T = alpha.shape[0]                              # number of noise levels in the schedule
+    for x0 in data_loader:                          # x0: (B, C, H, W)  a batch of clean images
+        t = torch.randint(0, T, (x0.shape[0],))     # (B,)  one random noise level per image
+        x_t, eps = q_sample(x0, t, alpha, beta)     # forward draw: both (B, C, H, W)
+        eps_hat = model(x_t, t)                     # (B, C, H, W)  network predicts the noise
+        loss = F.mse_loss(eps_hat, eps)             # scalar: MSE between predicted and true noise
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+```
+
 The interesting part is the *reverse process*. If we could learn to take a slightly-noisier $x_t$ and produce a slightly-cleaner $x_{t-1}$, then we could start from pure static, apply that denoising step a few hundred times, and arrive at something that looks like real data. The bet diffusion makes is that this per-step problem is *easy* even though the end-to-end problem (static → photo in one jump) is wildly hard. Each step only has to remove a little noise, and a neural network is perfectly happy to learn that.
 
 ![Diffusion as a forward and reverse process. Top: forward diffusion gradually adds small amounts of Gaussian noise to a clean image $x_0$ over steps $t = 0 \ldots T$ until it becomes $\mathcal{N}(0, I)$ noise, with per-step kernel $q(x_t \mid x_{t-1}) = \mathcal{N}(\sqrt{1-\beta_t}\,x_{t-1}, \beta_t I)$. Bottom: reverse diffusion learns $p_\theta(x_{t-1} \mid x_t)$ (predicting the noise / denoising direction) to walk from noise back to a clean sample.](/assets/images/diffusion-llm/diffusion.png)
 
-So what does the network actually predict? Here the literature looks more fragmented than it really is: you will see three different training targets, and they are all the same object wearing different hats. The reason is the marginal $x_t = \alpha(t)\,x_0 + \beta(t)\,\varepsilon$ itself: it ties together three quantities, the clean data $x_0$, the noise $\varepsilon$, and the noisy point $x_t$ the network is fed. Hold $x_t$ fixed (it is the input), and knowing any one of the other two pins down the third, so a network that predicts one of them implicitly predicts all of them.
+Let's work through the reverse process together starting with the forward equation,
 
-- **Predict the noise $\varepsilon$** (the DDPM ([Ho et al., 2020](#ref-ddpm)) view). The network $\varepsilon_\theta(x_t, t)$ is asked: of the stuff I’m looking at, which part is the Gaussian junk that got added? This is the most common parameterization in practice, because the target $\varepsilon$ is a unit-variance Gaussian at *every* noise level, so the regression targets stay nicely scaled and the loss is well-behaved across $t$. Subtract the predicted noise and what remains is your estimate of the signal.
+$$x_t = \alpha(t)\, x_0 + \beta(t)\, \varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, I),$$
 
-- **Predict the clean data $x_0$**. Here $x_\theta(x_t, t)$ tries to jump straight to the denoised answer: "given this corrupted thing, what was the original?". It is the most intuitive target and tends to behave better at high noise (near $t = 1$ almost no signal is left, and asking for the whole $x_0$ is better conditioned than asking for a tiny residual). It carries exactly the same information as the $\varepsilon$ target, just algebraically rearranged from the marginal: $x_0 = (x_t - \beta\,\varepsilon)/\alpha$, and conversely $\varepsilon = (x_t - \alpha\,x_0)/\beta$.
+First observation is if we hold $x_t$ fixed and this is just a straight line relating $x_0$ and $\varepsilon$, so either one determines the other,
 
-- **Predict the score $\nabla_{x_t} \log p(x_t)$**. This is the gradient of the log-density of *noisy* data, i.e. the direction in $x_t$-space that makes the current point more probable under the (noised) data distribution, "which way is uphill toward real data". It is the most theoretically central of the three, because it is exactly the quantity the reverse-time SDE and the probability-flow ODE need in order to run. And it is again the same object: for a Gaussian forward process the score is just the negative, rescaled noise, $\nabla_{x_t} \log p(x_t) = -\,\mathbb{E}[\varepsilon \mid x_t]\,/\,\beta(t)$, so a noise predictor *is* a score predictor up to the constant factor $-1/\beta(t)$.
+$$\varepsilon = \frac{x_t - \alpha\, x_0}{\beta}, \qquad x_0 = \frac{x_t - \beta\, \varepsilon}{\alpha}.$$
 
-The bridge that makes the "$x_0$" and "score" views interchangeable (in expectation) is Tweedie's formula,
+A third quantity hides in the same equation: the *score* of the noised distribution, $\nabla_{x_t} \log p(x_t)$. To see where it comes from, start with the one distribution we know exactly, the forward conditional, which is Gaussian by construction,
 
-$$\mathbb{E}[x_0 \mid x_t] = \frac{x_t + \beta(t)^2\,\nabla_{x_t}\log p(x_t)}{\alpha(t)},$$
+$$p(x_t \mid x_0) = \mathcal{N}\!\big(x_t;\, \alpha\, x_0,\; \beta^2 I\big).$$
 
-which is just the three relations above with the expectation taken over which clean point could have produced this $x_t$. So you can genuinely pick whichever target is convenient and convert at the end; the choice changes the loss scaling and numerical conditioning, not what is being learned. In practice people train the $\varepsilon$ or $x_0$ head and read off the score when they need it for sampling.
+The gradient of its log is immediate,
+
+$$\nabla_{x_t} \log p(x_t \mid x_0) = -\,\frac{x_t - \alpha\, x_0}{\beta^2} = -\,\frac{\varepsilon}{\beta},$$
+
+where the last step just reuses $\varepsilon = (x_t - \alpha\, x_0)/\beta$ from above. The score we actually want is for the *marginal* $p(x_t) = \int p(x_t \mid x_0)\, p(x_0)\, dx_0$. Differentiating under the integral and dividing through by $p(x_t)$ turns the marginal score into a posterior average of the conditional one,
+
+$$\nabla_{x_t} \log p(x_t) = \mathbb{E}_{x_0 \sim p(x_0 \mid x_t)}\!\big[\nabla_{x_t} \log p(x_t \mid x_0)\big] = -\,\frac{\mathbb{E}[\varepsilon \mid x_t]}{\beta(t)}.$$
+
+In words: the score points along the *average* noise direction over all the clean images that could plausibly have produced this $x_t$, scaled by $-1/\beta(t)$. So a trained noise predictor $\varepsilon_\theta(x_t, t) \approx \mathbb{E}[\varepsilon \mid x_t]$ is, up to that constant, already a score model.
+
+Take the posterior mean of $\varepsilon = (x_t - \alpha\, x_0)/\beta$, which gives $\mathbb{E}[\varepsilon \mid x_t] = (x_t - \alpha\, \mathbb{E}[x_0 \mid x_t])/\beta$, substitute it into the score identity, and solve for the clean-data posterior mean,
+
+$$\mathbb{E}[x_0 \mid x_t] = \frac{x_t + \beta(t)^2\, \nabla_{x_t} \log p(x_t)}{\alpha(t)}.$$
+
+This closes the triangle: noise, score, and clean data are three readings of the same underlying estimate $\mathbb{E}[\,\cdot \mid x_t]$, swapped between by the schedule constants.
+
+So $\varepsilon$, $x_0$, and the score are not three different things to learn, they are three coordinates on the same point, related by the fixed, known schedule constants $\alpha(t), \beta(t)$. A network that predicts any one of them implicitly predicts the other two. That is why the literature looks more fragmented than it is: the three "parameterizations" are the same object wearing different hats, and the choice between them changes the loss scaling and numerical conditioning, not what is being learned.
+
+What actually differs is the *question* you put to the network:
+
+- **Predict the noise $\varepsilon$** (the DDPM ([Ho et al., 2020](#ref-ddpm)) view): "of the stuff I'm looking at, which part is the Gaussian junk that got added?" This is the most common choice in practice, because $\varepsilon$ is a unit-variance Gaussian at *every* noise level, so the regression targets stay nicely scaled and the loss behaves the same across $t$.
+- **Predict the clean data $x_0$**: "given this corrupted thing, what was the original?" The most intuitive target, and better conditioned at high noise (near $t = 1$ there is almost no signal left, so asking for the whole $x_0$ is easier than asking for a tiny residual).
+- **Predict the score $\nabla_{x_t}\log p(x_t)$**: "which way is uphill toward real data?" The most theoretically central, because it is exactly what the reverse-time SDE and the probability-flow ODE consume in order to run.
 
 The score view is the one I find most intuitive: at every noise level the model is learning a vector field that points "uphill toward real data," and sampling is repeatedly stepping along it while peeling off noise.
+
+**In code.** Because the three are related by schedule constants, you pick one head, train it, and convert to whatever sampling needs. The common choice is the $\varepsilon$ head with a plain MSE against the noise that `q_sample` already handed back,
+
+```python
+def diffusion_loss(model, x0, t, alpha, beta):
+    # x0: (B, C, H, W)   t: (B,)
+    x_t, eps = q_sample(x0, t, alpha, beta)   # forward draw: both (B, C, H, W)
+    eps_hat = model(x_t, t)                    # network predicts the noise: (B, C, H, W)
+    return F.mse_loss(eps_hat, eps)            # scalar; targets are unit-variance at every t
+```
+
+and then read off the other two views with the relations above (all elementwise, broadcasting the per-sample schedule scalars `a`, `b` over the channel and spatial dims),
+
+```python
+def eps_to_x0(x_t, eps_hat, a, b):   # invert x_t = a*x0 + b*eps
+    return (x_t - b * eps_hat) / a   # (B, C, H, W)  estimate of the clean data
+
+def eps_to_score(eps_hat, b):        # score = -eps / beta
+    return -eps_hat / b              # (B, C, H, W)  direction uphill toward real data
+```
+
+We have the forward draw and the training loop; the third and final piece is sampling, the reverse process those conversions were built for. Start from pure noise and repeatedly subtract a little of the predicted noise, nudging $x_t$ to a slightly cleaner $x_{t-1}$ until you land back on a sample:
+
+```python
+@torch.no_grad()
+def sample(model, shape, betas):
+    # betas: (T,)  per-step variances; alpha_t = 1 - beta_t, alpha_bar_t = cumprod(alpha)
+    alpha = 1.0 - betas                              # (T,)
+    alpha_bar = torch.cumprod(alpha, dim=0)          # (T,)
+    x = torch.randn(shape)                           # (B, C, H, W)  pure noise x_T
+    for t in reversed(range(len(betas))):            # walk t = T-1, ..., 0
+        eps_hat = model(x, t)                         # (B, C, H, W)  predicted noise in x_t
+        mean = (x - betas[t] / (1 - alpha_bar[t]).sqrt() * eps_hat) / alpha[t].sqrt()
+        z = torch.randn_like(x) if t > 0 else 0.0     # inject fresh noise except on the last step
+        x = mean + betas[t].sqrt() * z                # (B, C, H, W)  one ancestral step -> x_{t-1}
+    return x                                          # (B, C, H, W)  a fresh sample x_0
+```
+
+Each step is just the forward relations from above run backwards, with a dash of fresh noise to keep the chain stochastic. Drop that noise term and you are instead integrating the *probability-flow ODE*, the deterministic path that shares the same marginals, which is precisely the bridge to flow matching in the next section.
 
 If you want the careful version of all this, the SDE that the forward process secretly is, the reverse-time SDE, and the probability-flow ODE that shares its marginals, I worked through it in [my earlier post on diffusion probabilities]({% post_url 2025-05-03-probabilities-diffusion %}). For this post the picture above is enough: **diffusion learns a vector field that pushes noise back toward data, one small step at a time.**
 
@@ -57,7 +146,7 @@ If you want the careful version of all this, the SDE that the forward process se
 
 Diffusion as described above is phrased in terms of stochastic noising and denoising, lots of random steps. Flow matching ([Lipman et al., 2022](#ref-fm)) takes the same goal, turn noise into data, and asks a cleaner question: forget the randomness, what if we just learn the *velocity* that transports a noise sample to a data sample along a smooth path?
 
-One heads-up on notation before we start. In the diffusion section above $x_0$ was the *clean data* and time ran toward noise. Flow matching conventionally runs the other way, so for this section $t = 0$ is *noise* and $t = 1$ is *data*. To match the figure I’ll write $x_0 \sim \mathcal{N}(0, I)$ for the noise end and $x_1$ for the data end.
+One heads-up on notation before we start. In the diffusion section above $x_0$ was the *clean data* and time ran toward noise. Flow matching conventionally runs the other way, so for this section $t = 0$ is *noise* and $t = 1$ is *data*. So I’ll write $x_0 \sim \mathcal{N}(0, I)$ for the noise end and $x_1$ for the data end.
 
 Picture a noise point and a data point as the two ends of a path. The simplest path you could draw is a straight line,
 
@@ -73,7 +162,40 @@ That’s the whole trick. We define a target velocity field $u_t(x_t) = x_1 - x_
 
 $$\mathbb{E}_{t,\, x_0,\, x_1}\left[\big\lVert v_\theta(x_t, t) - u_t(x_t) \big\rVert^2\right].$$
 
-The headache, of course, is that any given point $x$ could lie on many different noise→data paths, so the *true* marginal velocity is an average over all of them and we can’t write it down directly. The key insight of flow matching is that you don’t need to: if you regress against the *conditional* velocity for a single sampled pair $(x_0, x_1)$, you get the same gradients in expectation as regressing against the intractable marginal field. So training is just: sample noise $x_0$, sample data $x_1$, pick a time $t \sim U[0, 1]$, interpolate to get $x_t$, and ask the network to predict $x_1 - x_0$.
+Concretely, a single training step looks like this:
+
+1. **Sample the two endpoints.** Draw a real data point $x_1 \sim p_{\text{data}}$ and a noise point $x_0 \sim \mathcal{N}(0, I)$. These are the two ends of one path.
+2. **Pick a time on the path.** Draw $t \sim U[0, 1]$, where $t = 0$ is the noise end and $t = 1$ is the data end.
+3. **Interpolate.** Place a point on the straight line between them, $x_t = (1 - t)\,x_0 + t\,x_1$. This, and *only* this, is what the network gets to see.
+4. **Form the target velocity.** The direction from noise to data is constant along the line, so $u_t = x_1 - x_0$ (this is literally $\tfrac{d x_t}{dt}$).
+5. **Predict and compare.** Run the network for its guess $v_\theta(x_t, t)$ and nudge it toward the target with the squared error $\lVert v_\theta(x_t, t) - u_t \rVert^2$.
+6. **Repeat** over many independent draws of $(x_0, x_1, t)$.
+
+Visually, one such path is just a straight shot from the noise end to the data end, and step 3 drops the network somewhere along it:
+
+```
+t:      0.0         0.25         0.5         0.75         1.0
+        x0 ●────────────●────────────●────────────●────────────● x1
+      (noise)                       x_t                       (data)
+                            velocity u_t = x1 - x0  ───────────▶
+```
+
+At this point a natural objection is: isn't this just linear interpolation from noise to data? Yes and no, and the difference is the whole reason flow matching works. *Yes*, in that each individual training pair $(x_0, x_1)$ is joined by a straight line and the target velocity along it is the constant $x_1 - x_0$, a perfectly linear flow. *No*, in that the model never sees a matched pair. At training time it is handed a single point $x_t$, drawn from one $(x_0, x_1)$ pair, and asked for the velocity *there*, with no clue which endpoints produced it. Many different noise→data pairs pass through the neighbourhood of any given $x_t$, each tugging in a different straight-line direction, so the best the network can do is predict their *average*. Averaging a sheaf of crossing straight lines yields a smooth, curved field, the marginal velocity, and that curvature is exactly what lets a single model carry the whole noise cloud onto the whole data distribution.
+
+![Flow matching as transport from a noise distribution (left) to a data distribution (right). Each faint line is one sampled (noise, data) pair joined by a straight conditional path, and the two bold lines are individual examples that happen to cross. Because many such paths pass through any given region, the velocity the network learns there is the average over all of them, so the marginal field it integrates at sampling time is smooth and curved even though every individual training target is a straight-line velocity.](/assets/images/diffusion-llm/flowmatching-illustration.png)
+
+This is also what makes the objective tractable. That marginal velocity is an intractable average over all the paths through $x_t$, but we never have to form it: regressing against the *conditional* velocity $x_1 - x_0$ for a single sampled pair gives the same gradient in expectation as regressing against the intractable marginal field. So training is just: sample noise $x_0$, sample data $x_1$, pick a time $t \sim U[0, 1]$, interpolate to get $x_t$, and ask the network to predict $x_1 - x_0$. In code it is as short as it sounds:
+
+```python
+def flow_matching_loss(model, x1, eps):
+    # x1: (B, ...) a data sample;  eps: (B, ...) ~ N(0, I) noise  (the two path endpoints)
+    t = torch.rand(x1.shape[0])                  # (B,)  flow time ~ U[0,1]: 0 = noise, 1 = data
+    tv = t.view(-1, *([1] * (x1.dim() - 1)))     # (B, 1, ...)  broadcast t over the feature dims
+    x_t = (1 - tv) * eps + tv * x1               # (B, ...)  a point on the straight noise->data path
+    v_target = x1 - eps                           # (B, ...)  the constant conditional velocity
+    v_pred = model(x_t, t)                        # (B, ...)  the network's velocity at x_t
+    return F.mse_loss(v_pred, v_target)           # scalar L2
+```
 
 Once trained, generation is an ODE rather than a noisy walk: start from a pure-noise sample $x_0 \sim \mathcal{N}(0, I)$ and integrate the learned velocity forward from $t = 0$ to $t = 1$,
 
@@ -87,7 +209,7 @@ With that groundwork in place, let’s look at what actually changes when the da
 
 ## The problem with discrete data
 
-Everything above leans on one move that quietly does a lot of work: adding a little Gaussian noise to $x_0$. That makes sense for an image, where a pixel is a real number and "slightly noisier" is a well defined thing. It makes no sense for a token. A token is an index into a vocabulary, token 4123 is not "close to" token 4124 in any meaningful way, and there is no such thing as $0.3$ of the word "cat". The whole continuous machinery, the interpolation $\alpha(t) x_0 + \beta(t)\varepsilon$, the score $\nabla_x \log p(x_t)$, the velocity field, assumes a space where you can take small steps in any direction. A vocabulary has no such geometry.
+Everything above, diffusion and flow matching alike, leans on one move that quietly does a lot of work: treating the data as a point in a continuous vector space, so that "a little noisier" (diffusion) or "a step along a path" (flow matching) is even a well defined thing. That makes sense for an image, where a pixel is a real number and you can always nudge it by a fraction. It makes no sense for a token. A token is an index into a vocabulary, token 4123 is not "close to" token 4124 in any meaningful way, and there is no such thing as $0.3$ of the word "cat". The whole continuous machinery, the interpolation $\alpha(t) x_0 + \beta(t)\varepsilon$, the score $\nabla_x \log p(x_t)$, the velocity field, assumes a space where you can take small steps in any direction. A vocabulary has no such geometry.
 
 So if we want to keep the diffusion recipe, the part we have to redesign is the forward process. We need a way to "corrupt" a sequence of tokens gradually, in a way that has a known, easy-to-sample forward direction and a learnable reverse. There are two answers that have stuck, and they correspond to two different ways of asking "what is the discrete version of noise?"
 
@@ -97,7 +219,7 @@ A quick note on the setup before the code. Everything below is one small project
 
 ## LLaDA: noise is masking
 
-Here is the nicest thing about masked diffusion. You already know the forward process, you have seen it before, it is just BERT ([Devlin et al., 2019](#ref-bert)). Pick a noise level $t \in (0, 1)$, and mask each token independently with probability $p_{\text{mask}}(t)$. At $t$ near 0 almost nothing is masked, at $t$ near 1 almost everything is. The reverse process is a network that looks at the partially masked sequence and predicts the original tokens at the masked positions. Train that, and to generate you start from an all-`[MASK]` sequence and unmask your way to a real one.
+LLaDA uses masked diffusion which is the same idea as BERT ([Devlin et al., 2019](#ref-bert)). Pick a noise level $t \in (0, 1)$, and mask each token independently with probability $p_{\text{mask}}(t)$. At $t$ near 0 almost nothing is masked, at $t$ near 1 almost everything is. The reverse process is a network that looks at the partially masked sequence and predicts the original tokens at the masked positions. Train that, and to generate you start from an all-`[MASK]` sequence and unmask your way to a real one.
 
 ### The forward process: masking on a schedule
 
@@ -115,17 +237,50 @@ def _forward_process(self, input_ids):
     return noisy, masked, p_mask
 ```
 
-Because the coin flips are independent, the forward marginal factorizes over positions, $q(x_t \mid x_0) = \prod_i q(x_t^i \mid x_0^i)$, with each token either copied through or replaced by `[MASK]` with probability $p_{\text{mask}}(t)$. This is the *same* absorbing forward process we will meet again in SEDD; the only difference is the schedule. Here it is linear, $p_{\text{mask}}(t) = (1-\epsilon)t + \epsilon \approx t$, whereas SEDD's absorbing graph pins it to $1 - e^{-\bar\sigma(t)}$. Same coin, different dial.
+Because the coin flips are independent, the forward marginal factorizes over positions, $q(x_t \mid x_0) = \prod_i q(x_t^i \mid x_0^i)$, with each token either copied through or replaced by `[MASK]` with probability $p_{\text{mask}}(t)$. This is the *same* absorbing forward process we will meet again in SEDD; the only difference is the schedule, the rule for how fast $p_{\text{mask}}(t)$ ramps from roughly 0 (nothing masked) at $t = 0$ to 1 (everything masked) at $t = 1$. Here it is linear, $p_{\text{mask}}(t) = (1-\epsilon)t + \epsilon \approx t$, where the small floor $\epsilon$ just keeps the probability above zero (the loss below divides by it). SEDD's absorbing graph uses a different curve for the same job; we will see its exact form later. Same coin, different dial.
 
-### Why divide by $p_{\text{mask}}$? The variational bound
+### Deriving the loss from the variational bound
 
-The loss is cross-entropy on the masked positions only, which again is exactly the BERT masked-language-modelling loss. The one twist that makes it a proper diffusion bound rather than just BERT is the weighting: each masked token's loss is divided by $p_{\text{mask}}(t)$. That factor is not a heuristic, it falls straight out of the likelihood bound, and it is worth seeing why.
+The loss is cross-entropy on the masked positions only, which again is exactly the BERT masked-language-modelling loss. BERT picks a fixed fraction of positions to mask (about 15%) and averages the cross-entropy over them,
 
-Like any diffusion model, LLaDA is trained to maximize a variational lower bound on $\log p_\theta(x_0)$. For absorbing (masking) diffusion that bound collapses to a time-integral of masked-token cross-entropy. Writing $\alpha_t$ for the probability a token is still *un*masked at time $t$ (so $1 - \alpha_t = p_{\text{mask}}(t)$), the negative bound is
+$$\mathcal{L}_{\text{BERT}} = \mathbb{E}\!\left[\frac{1}{|\mathcal{M}|}\sum_{i \in \mathcal{M}} -\log p_\theta\big(x_0^i \mid x_t\big)\right],$$
+
+where $\mathcal{M}$ is the set of masked positions. LLaDA's loss looks almost identical, with two changes. The masking level $t$ is drawn fresh from $U[0,1]$ every step, so the model is trained across the whole range from lightly masked to almost fully masked, and each masked token's cross-entropy is divided by $p_{\text{mask}}(t)$,
+
+$$\mathcal{L}_{\text{LLaDA}} = \mathbb{E}_{t \sim U[0,1]}\;\mathbb{E}_{x_t \sim q(\cdot\mid x_0)}\!\left[\frac{1}{p_{\text{mask}}(t)}\sum_{i:\, x_t^i = \texttt{[MASK]}} -\log p_\theta\big(x_0^i \mid x_t\big)\right].$$
+
+That $1/p_{\text{mask}}(t)$ factor is the one twist that turns BERT into a proper diffusion bound. It is not a heuristic, it falls straight out of the likelihood bound, and it is worth seeing why.
+
+Earlier we trained continuous diffusion with a plain MSE on the noise and never said where that loss came from. It is really a simplified, reweighted form of a deeper objective: a variational lower bound (an ELBO) on the data log-likelihood $\log p_\theta(x_0)$. For LLaDA it is cleanest to start from that bound directly, written as the usual sum of per-step KL terms,
+
+$$-\log p_\theta(x_0) \le \mathbb{E}_q\Big[\underbrace{D_{\mathrm{KL}}\big(q(x_T\mid x_0)\,\|\,p(x_T)\big)}_{\text{prior}} + \sum_{t=2}^{T} D_{\mathrm{KL}}\big(q(x_{t-1}\mid x_t, x_0)\,\|\,p_\theta(x_{t-1}\mid x_t)\big) \;-\; \log p_\theta(x_0\mid x_1)\Big].$$
+
+Two facts make this collapse to something simple. First, the forward process masks each position independently, so the whole bound factorizes over positions and we can derive it for a single token and sum at the end. Second, masking is *absorbing*, which makes the per-step posterior almost trivial. Work in discrete time with $T$ steps and let $\bar\alpha_t$ be the probability a token is still unmasked at step $t$ (so $\bar\alpha_0 = 1$, decreasing toward $\bar\alpha_T \approx 0$, with $p_{\text{mask}} = 1 - \bar\alpha_t$).
+
+**The forward posterior.** A single token is in one of two states: its true value $x_0$, or $\texttt{[MASK]}$. Since a masked token stays masked, the posterior $q(x_{t-1}\mid x_t, x_0)$ is trivial in one case and a two-way split in the other:
+
+- if $x_t$ is *unmasked*, it must have been unmasked at $t-1$ too, so $x_{t-1} = x_0$ with certainty;
+- if $x_t = \texttt{[MASK]}$, then $x_{t-1}$ was either already masked or still held the true token and got masked on this step. Bayes gives the split
+
+$$q(x_{t-1} = x_0 \mid x_t = \texttt{m}, x_0) = \frac{\bar\alpha_{t-1} - \bar\alpha_t}{1 - \bar\alpha_t}, \qquad q(x_{t-1} = \texttt{m} \mid x_t = \texttt{m}, x_0) = \frac{1 - \bar\alpha_{t-1}}{1 - \bar\alpha_t}.$$
+
+**The reverse model.** We parametrize $p_\theta$ by plugging the network's predicted distribution over the clean token, $p_\theta(x_0 \mid x_t)$, into that *same* posterior shape. So it reproduces $q$'s "stay masked" probability $\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}$ exactly, and spreads the remaining reveal mass $\frac{\bar\alpha_{t-1}-\bar\alpha_t}{1-\bar\alpha_t}$ over token values according to $p_\theta(\cdot \mid x_t)$ instead of dumping it all on the true $x_0$.
+
+**One KL term.** Unmasked positions contribute nothing: there $q$ and $p_\theta$ are both the point mass on $x_0$, so the KL is zero. For a masked position the two distributions agree on the mask atom and differ only on the reveal branch, and the KL of two distributions sharing an atom keeps only that branch,
+
+$$D_{\mathrm{KL}}\big(q \,\|\, p_\theta\big) = \frac{\bar\alpha_{t-1} - \bar\alpha_t}{1 - \bar\alpha_t}\,\big(-\log p_\theta(x_0 \mid x_t)\big).$$
+
+Each step's KL is just a *scaled cross-entropy* of the true token under the denoiser.
+
+**Sum the steps.** Now take the expectation over the forward process. A token is masked at step $t$ with probability $1 - \bar\alpha_t$, and the KL above is conditioned on exactly that event, so the $1 - \bar\alpha_t$ cancels,
+
+$$\mathbb{E}_{x_t}\big[\text{KL}_t\big] = (\bar\alpha_{t-1} - \bar\alpha_t)\,\mathbb{E}\big[-\log p_\theta(x_0 \mid x_t) \,\big|\, \text{masked}\big].$$
+
+The sum $\sum_t (\bar\alpha_{t-1} - \bar\alpha_t)(\cdots)$ is a Riemann sum of $-\bar\alpha_t'$; letting $T \to \infty$ and writing the continuous survival as $\alpha_t$ turns it into an integral. Re-expressing the per-token conditional expectation as an unconditional sum over the random masked set puts back a factor $\frac{1}{1-\alpha_t}$ (since a position is in that set with probability $1-\alpha_t$), and summing over all positions gives the bound
 
 $$-\log p_\theta(x_0) \;\le\; \mathbb{E}_{t\sim U[0,1]}\left[\frac{-\alpha_t'}{1-\alpha_t}\; \mathbb{E}_{x_t \sim q(\cdot\mid x_0)} \sum_{i:\, x_t^i = \texttt{[MASK]}} \big(-\log p_\theta(x_0^i \mid x_t)\big)\right].$$
 
-Only the masked positions appear in the sum, because the unmasked tokens are copied verbatim and carry no loss. The weight $\frac{-\alpha_t'}{1-\alpha_t}$ comes from taking the discrete-time ELBO over $T$ masking steps and letting $T \to \infty$ (the full telescoping algebra is in the D3PM ([Austin et al., 2021](#ref-d3pm)) and LLaDA ([Nie et al., 2025](#ref-llada)) papers); intuitively it is the rate at which fresh mass is entering the masked state, normalized by how much is masked already.
+(The prior term vanishes because at $t = 1$ both $q$ and the prior put all their mass on the fully-masked sequence, and the reconstruction term $-\log p_\theta(x_0 \mid x_1)$ folds into the same integral.) Only the masked positions appear, because the unmasked ones carried zero KL, and the weight $\frac{-\alpha_t'}{1-\alpha_t}$ is exactly what fell out: $-\alpha_t'$ is the rate at which tokens are freshly masked at time $t$, and $\frac{1}{1-\alpha_t}$ undoes the probability that the position we are summing over was masked at all. This matches the absorbing-state result of D3PM ([Austin et al., 2021](#ref-d3pm)) and the LLaDA ([Nie et al., 2025](#ref-llada)) objective.
 
 Now specialize to LLaDA's linear schedule $p_{\text{mask}}(t) = t$, i.e. $\alpha_t = 1 - t$ and $\alpha_t' = -1$. The weight becomes
 
@@ -298,7 +453,15 @@ Here is the part I most wanted to write down, because it is the kind of bug that
 
 When I first trained LLaDA on TinyStories, the loss dropped for about twenty-five steps, from roughly 11 down to 5.9, and then sat there. Dead flat. For thousands of steps. Validation perplexity parked itself at about 340 and would not move, and every sample the model produced was punctuation and a couple of stop words, things like "." and "the" and "They" over and over. The training did not error. The metrics did not look insane. It just was not learning anything past the first few dozen steps.
 
-The number 5.9 turned out to be the tell. That is roughly the unigram entropy of the data, the loss you get from predicting the marginal token frequencies and nothing context-dependent. The model had learned which tokens are common and then stopped. So the question was not "why is the loss high" but "why has the body of the transformer stopped contributing at all".
+The number 5.9 turned out to be the tell. That is roughly the unigram entropy of the data, the loss you get from predicting the marginal token frequencies and nothing context-dependent.
+
+Where does 5.9 come from? Cross-entropy in nats is $\mathbb{E}_{x \sim p}[-\log q(x)]$, the loss of a model that assigns probability $q(x)$ to the true token $x$. If the model ignores context entirely and predicts the *same* distribution $q$ at every position, the best it can do is set $q$ equal to the data's marginal token distribution $p$, and the loss bottoms out at the *unigram entropy*,
+
+$$H = -\sum_{v} p(v)\,\log p(v),$$
+
+the entropy of the token-frequency table. For the TinyStories tokens that comes out to about 5.9 nats. Two sanity checks bracket this number. At initialization the network is essentially uniform over the roughly 50k GPT-2 vocabulary, so the loss should start near $\log(50257) \approx 10.8$, which is right where it began (~11). And a loss of 5.9 nats is a perplexity of $e^{5.9} \approx 365$, matching the validation perplexity that parked itself around 340. Both numbers say the same thing: the model had collapsed onto the marginal token frequencies and stopped using context.
+
+The model had learned which tokens are common and then stopped. So the question was not "why is the loss high" but "why has the body of the transformer stopped contributing at all".
 
 The way to localize this kind of thing is a single-batch overfit test. Take one fixed batch and try to drive the loss to zero on it. A 124M parameter transformer should crush a single batch trivially. Mine could not, it stalled at the same unigram floor. That rules out the data pipeline and most hyperparameter explanations, and points at something structural. Then I instrumented the gradient norms per parameter group, and that was the smoking gun: at step 0 everything looked healthy, but within about 25 steps the gradients flowing into the transformer blocks had collapsed to around 0.004 while the embedding and output head kept a healthy gradient around 0.5 to 0.9. The body was receiving no learning signal. Only the marginal predictor, the embedding tied to the output head, was still moving, which is exactly how you end up stuck at the unigram distribution.
 
