@@ -7,7 +7,7 @@ category: "Machine Learning"
 tags: ["diffusion", "ddpm", "flow-matching", "edm", "generative-models", "probability"]
 ---
 
-A diffusion model gives you a way to *sample*, but it doesn’t obviously give you a way to ask “how likely is this particular sample?”. It turns out you can recover the exact log-probability of any point, and it’s genuinely useful: MotionDiffuser ([Jiang et al., 2023](#ref-motiondiffuser)) uses it to rank and filter generated trajectories by likelihood, and the same machinery underlies likelihood evaluation and out-of-distribution detection. This post derives that probability from the ground up and then implements it.
+A diffusion model gives us a way to *sample*, but it doesn’t obviously give us a way to ask “how likely is this particular sample?”. It turns out we can recover the exact log-probability of any point, e.g. MotionDiffuser ([Jiang et al., 2023](#ref-motiondiffuser)) uses it to rank and filter generated trajectories by likelihood, and the same machinery underlies likelihood evaluation and out-of-distribution detection. This post derives that probability from the ground up and then implements it.
 
 DDPM ([Ho et al., 2020](#ref-ddpm)), EDM ([Karras et al., 2022](#ref-edm)), and flow matching ([Lipman et al., 2022](#ref-fm)) are all members of the same diffusion / score-based family: DDPM is the original discrete-time formulation, while EDM and flow matching are continuous-time frameworks that turn out to be more convenient for the likelihood computation we’re after. The derivations here follow the EDM paper, extended to conditional flow matching.
 
@@ -229,9 +229,8 @@ The two agree up to the estimator’s variance, which shrinks as we average more
 
 ## Wrapping up
 
-We started from the variance-exploding SDE behind EDM, converted it into the deterministic probability-flow ODE that shares the same marginals, and used the continuity equation to turn “how does the density change along the flow” into the clean trace identity $\tfrac{d}{dt}\log p = -\mathrm{Tr}(\partial_z f)$. Integrating that along the ODE, with a Gaussian prior at the noise end and Hutchinson’s estimator for the trace, gives the exact log-probability of any sample, for both EDM and flow matching. The payoff is concrete: a single scalar per sample that you can use to rank generations, evaluate likelihoods, or flag out-of-distribution inputs.
+We started from the variance-exploding SDE behind EDM, converted it into the deterministic probability-flow ODE that shares the same marginals, and used the continuity equation to turn “how does the density change along the flow” into the clean trace identity $\tfrac{d}{dt}\log p = -\mathrm{Tr}(\partial_z f)$. Integrating that along the ODE, with a Gaussian prior at the noise end and Hutchinson’s estimator for the trace, gives the exact log-probability of any sample, for both EDM and flow matching. This concludes my quick notes on estimating probabilities of a diffusion model, onto the next one.
 
-Two practical caveats. The log-probability is only as exact as your ODE solver, the forward-Euler loop above is written for clarity, so in practice use a higher-order solver (e.g. Heun, as EDM and MotionDiffuser do) and enough steps. And Hutchinson trades exactness for speed: it’s unbiased but noisy, and averaging more probe vectors reduces the variance at linear cost.
 
 ## References
 
