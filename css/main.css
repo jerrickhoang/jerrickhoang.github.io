@@ -504,6 +504,33 @@ a:hover {
   color: var(--blue500);
 }
 
+.post-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 24px 0;
+  font-size: 0.95rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.post-content table th,
+.post-content table td {
+  border: 1px solid var(--grey300);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.post-content table th {
+  background: var(--grey150);
+  color: var(--grey900);
+  font-weight: 600;
+}
+
+.post-content table tbody tr:nth-child(even) {
+  background: var(--grey100);
+}
+
 /* Footer */
 .footer {
   background: var(--grey100);

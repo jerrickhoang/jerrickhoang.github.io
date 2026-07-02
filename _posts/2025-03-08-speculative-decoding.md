@@ -1,13 +1,11 @@
 ---
 layout: post
 title: "From Scratch #2: Speculative Decoding"
-date: 2026-01-08
+date: 2025-03-08
 description: "Implementing speculative decoding from scratch in PyTorch: the draft/target setup, rejection sampling, a proof that the output distribution is exactly the target's, and benchmarks across k."
 category: "Machine Learning"
 tags: ["llm", "inference", "speculative-decoding", "pytorch", "from-scratch"]
 ---
-
-Before we begin, I love writing so none of these is written by AI, which means you might run into grammatical errors, awkwardly phrased sentences, and bad puns.
 
 Recently I've used Cursor so much that I've realized I'm losing my ability to do ML / pytorch coding. This makes me want to find small / byte-sized topics / algorithms to code from scratch. I thought speculative decoding is the perfect example to start.
 
