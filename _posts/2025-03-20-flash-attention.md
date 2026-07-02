@@ -64,7 +64,7 @@ The memory is a hierarchy, and the levels trade capacity against speed in a very
 | Level | Scope | Capacity | Bandwidth | Managed by |
 | --- | --- | --- | --- | --- |
 | Registers | per-thread, inside an SM | 256 KB/SM (~33 MB total) | fastest, ~single-cycle | compiler |
-| SMEM / L1 | per-SM, on-chip scratchpad | 256 KB/SM (~33 MB total) | ~10× HBM | **you** (shared memory) |
+| SMEM / L1 | per-SM, on-chip scratchpad | 256 KB/SM (~33 MB total) | ~10× HBM | **user** (shared memory) |
 | L2 cache | shared across all SMs, on-chip | ~50 MB | ~5 TB/s | hardware |
 | HBM | off-chip main memory | 80 GB | ~3.35 TB/s | n/a |
 
@@ -74,7 +74,7 @@ There are two things we need to notice. First, the on-chip memory is *tiny* only
 
 This is precisely why attention is **memory-bound**. The useful work, two matmuls, is cheap for the Tensor Cores. What's expensive is the *traffic*: the naive implementation writes the full $N \times N$ score matrix out to HBM, reads it back to run the softmax, writes $P$, then reads it *yet again* for $PV$. That's several round trips of a multi-gigabyte tensor across the slowest link in the machine, while the Tensor Cores sit mostly idle waiting on it. Shaving FLOPs wouldn't help here; shaving HBM accesses would.
 
-The whole idea behind Flash Attention is to **never write $S$ or $P$ to HBM at all.** The one obstacle is softmax. It's a row-wise operation that normally needs the *whole* row of $S$ at once: you can't normalize until you've seen every entry. So the first thing we need is a way to compute softmax incrementally, seeing the row a block at a time.
+The whole idea behind Flash Attention is to **never write $S$ or $P$ to HBM at all.** The one obstacle is softmax. It's a row-wise operation that normally needs the *whole* row of $S$ at once: we can't normalize until we've seen every entry. So the first thing we need is a way to compute softmax incrementally, seeing the row a block at a time.
 
 ## The online (streaming) softmax
 
@@ -186,7 +186,7 @@ $$
 
 One $\alpha$ rescales both $\ell_i$ and $O_i$, since both are `exp`-weighted sums taken relative to the old max. Normalize once at the end: $O_i \leftarrow O_i / \ell_i$.
 
-Here is the pure-PyTorch version of that loop. This is the version to *read*: it's the same algorithm as the GPU kernel we'll write later, just with explicit Python `for` loops over blocks instead of a grid of GPU programs, so you can follow every line:
+Here is the pure-PyTorch version of that loop (we'll write a better version later):
 
 ```python
 def flash_attention_forward(q, k, v, causal=False, sm_scale=None,
@@ -274,7 +274,7 @@ To see this, I benchmarked four implementations on the same problem sizes: our `
 
 ![Latency (log scale, lower is better) and achieved TFLOP/s (higher is better) versus sequence length for naive, blocked, triton, and SDPA. Triton tracks SDPA closely and both scale to long sequences; naive is far slower and stops early; the pure-PyTorch blocked version is slowest.](/assets/images/flash-attention/bench_speed.png)
 
-A few things to read off this. First, the Triton kernel tracks PyTorch's SDPA reasonably closely (e.g. at $N = 4096$, ~113 vs ~186 TFLOP/s; the official kernel is more optimized, but we're in the same league) and both keep scaling to 16K tokens where naive has long since fallen over. Second, naive is both far slower *and* runs out of runway: I capped it at $N = 4096$ because beyond that it OOMs. Third, and this is the honest caveat: the pure-PyTorch `blocked` version is *dramatically* slower than everything (sub-1 TFLOP/s), roughly 100× slower than Triton. That's expected and important to internalize: the *algorithm* is what gives you linear memory, but the *speed* comes from actually keeping tiles in SRAM and fusing the loop into one kernel launch. Python-level blocking gets you the memory story but pays a huge per-op overhead and still round-trips through HBM. To get the speed you have to go down to the kernel.
+A few things to read off this. First, the Triton kernel tracks PyTorch's SDPA reasonably closely (e.g. at $N = 4096$, ~113 vs ~186 TFLOP/s; the official kernel is more optimized, but we're in the same league) and both keep scaling to 16K tokens where naive has long since fallen over. Second, naive is both far slower *and* runs out of runway: I capped it at $N = 4096$ because beyond that it OOMs. Third, and this is the honest caveat: the pure-PyTorch `blocked` version is *dramatically* slower than everything (sub-1 TFLOP/s), roughly 100× slower than Triton. That's expected and important to internalize: the *algorithm* is what gives us linear memory, but the *speed* comes from actually keeping tiles in SRAM and fusing the loop into one kernel launch. Python-level blocking gets us the memory story but pays a huge per-op overhead and still round-trips through HBM. To get the speed we have to go down to the kernel.
 
 ## The backward pass (FA2 style)
 
@@ -459,58 +459,17 @@ def flash_attention(q, k, v, causal=False, sm_scale=None):
 
 The thing I want to highlight is `ctx.save_for_backward(q, k, v, out, lse)`. A normal attention autograd function would stash the $N \times N$ probabilities $P$ for the backward pass. We save the length-$N$ vector `lse` instead and recompute $P$ on the fly. That one substitution is the difference between $O(N^2)$ and $O(N)$ activation memory, and it's why Flash Attention is drop-in trainable at long context.
 
-## Causal masking, cheaply
-
-For causal (decoder) attention, query $i$ may only attend to keys $j \le i$. There are two things to get right, and both show up in the kernels above.
-
-The first is masking *within* the diagonal block: entries where $j > i$ get set to $-\infty$ before the exponential, so they contribute exactly zero to the softmax. The second is more interesting for performance: **entire key blocks that lie strictly in the future of a query block are never visited at all.** That's the `hi = ... (start_m + 1) * BLOCK_M + offset` line: the inner loop simply stops early. For a full causal attention this skips roughly the upper triangle, cutting the work about in half, which is why FLOP counts for causal attention are multiplied by $0.5$. we get the causal speedup for free just by not looping over blocks we'd throw away.
-
-One subtlety worth calling out: the mask is aligned to the **bottom-right** corner via `offset = seqlen_k - seqlen_q`, not the top-left. This matters when the query and key lengths differ, for example when decoding a suffix of a sequence where we have fewer queries than keys, so that query $i$ correctly attends to the appropriate prefix of keys.
-
 ## Choosing the tile size
 
-The block sizes $(B_r, B_c)$ (`BLOCK_M` and `BLOCK_N` in the kernel) are the main performance knob, and the tradeoff is real. Bigger tiles feed the tensor cores larger matmuls (better utilization) but use more SRAM and registers per program, which lowers occupancy (fewer programs can be resident at once to hide memory latency). Too small and we're launching lots of tiny matmuls that never saturate the hardware; too big and you spill. So I swept the tile shape and measured throughput:
+The block sizes $(B_r, B_c)$ (`BLOCK_M` and `BLOCK_N` in the kernel) are the main performance knob. Bigger tiles feed the tensor cores larger matmuls (better utilization) but use more SRAM and registers per program, which lowers occupancy (fewer programs can be resident at once to hide memory latency). Smaller tiles then we're launching lots of tiny matmuls that never saturate the hardware. So I swept the tile shape and measured throughput:
 
 ![Achieved TFLOP/s across a grid of (BLOCK_M, BLOCK_N) tile shapes. Throughput is worst for the smallest 32x32 tiles, peaks in the middle around 64x64, and dips again for the largest tiles.](/assets/images/flash-attention/block_size_sweep.png)
 
 The smallest $32 \times 32$ tile lands around 54 TFLOP/s, the sweet spot around $64 \times 64$ hits ~125 TFLOP/s (more than 2× faster), and the largest tiles fall back toward ~90 as SRAM pressure and lower occupancy start to bite. There's no universally "right" tile size; it depends on head dimension, dtype, and the specific GPU's SRAM and register file, which is exactly why the production `flash-attn` library autotunes over a set of configurations. For this educational kernel I just picked sensible defaults from this sweep.
 
-## Does it actually match?
-
-None of this is worth anything if the output is wrong, and "it's exact, not an approximation" is a claim you should demand evidence for. The test suite compares both the blocked and Triton implementations against the naive reference (forward output *and* all three gradients $dQ, dK, dV$) across shapes, head dims, dtypes, causal and non-causal, and even ragged sequence lengths that aren't a multiple of the block size. It also cross-checks against PyTorch's SDPA:
-
-```python
-def test_triton_matches_reference(dtype, causal, d):
-    b, h, sq, sk = 2, 3, 512, 512
-    q, k, v = _make_inputs(b, h, sq, sk, d, dtype, "cuda")
-    do = torch.randn_like(q)
-
-    out = flash_attention(q, k, v, causal=causal)
-    out.backward(do)
-    ref_out, dq_ref, dk_ref, dv_ref = _reference_fwd_bwd(q, k, v, do, causal)
-
-    # Low-precision tolerances: fp16/bf16 matmuls vs an fp32 reference.
-    atol = 2e-2 if dtype == torch.float16 else 3e-2
-    assert torch.allclose(out.float(), ref_out, atol=atol, rtol=0)
-    assert torch.allclose(q.grad.float(), dq_ref, atol=atol, rtol=0)
-    assert torch.allclose(k.grad.float(), dk_ref, atol=atol, rtol=0)
-    assert torch.allclose(v.grad.float(), dv_ref, atol=atol, rtol=0)
-```
-
-The tolerances deserve a word, because "exact" and `atol=2e-2` look contradictory. The gap isn't algorithmic: it's that our fp16/bf16 kernel is being compared against an fp32 reference, so we're only seeing the usual low-precision matmul slack, not any approximation in the method. Run the *blocked* version in fp32 against the fp32 reference and it matches to `1e-4`. The algorithm really is exact; the only error is the one you'd get from doing any fp16 matmul.
-
 ## Wrapping up
 
-That's Flash Attention end to end: the online softmax that lets you compute a row of softmax in a streaming pass, fusing it with the $PV$ matmul so you never materialize $P$, the tiling that makes memory linear in sequence length, the log-sum-exp checkpoint that makes the backward pass recompute-instead-of-store, a readable pure-PyTorch version to understand it, and a Triton kernel to actually make it fast. The experiments backed up every theoretical claim: linear memory (247× less than naive at 32K, and running where naive OOMs), matching PyTorch's fused SDPA on throughput, numerical stability from the max-rescaling, and a genuine tile-size sweet spot.
-
-A few things I took away from building this that the papers state but don't quite hit home until you've written the code:
-
-- **Same FLOPs, different memory traffic.** This is the whole game and it's worth repeating. Flash Attention doesn't do less arithmetic than naive attention. It does the *same* arithmetic while touching HBM far less. On memory-bound operations, the memory hierarchy is the algorithm.
-- **The algorithm and the kernel are separable.** The blocked PyTorch version has the linear-memory property but is ~100× slower than Triton. The math gives you the memory win; only the kernel gives you the speed win. Both matter, and conflating them will confuse you.
-- **The log-sum-exp is the quiet hero.** Storing one scalar per row instead of the quadratic $P$ is what makes training at long context possible, and it barely gets a sentence in most explanations.
-- **Where it goes next.** The natural follow-ups are FlashAttention-3 ([Shah et al., 2024](#ref-fa3)), which exploits the Hopper architecture's asynchrony and FP8, and the various long-context variants (paged KV caches, sliding-window and block-sparse attention) that build on the same tiled foundation. Good candidates for a future post.
-
-As always, the code is meant to be read top to bottom and run, not taken as production-grade; for real workloads use the official [`flash-attn`](https://github.com/Dao-AILab/flash-attention) package, which autotunes, supports more head dims and dtypes, and squeezes out the last bit of performance this teaching version leaves on the table. If you spot a bug, it's divine benevolence that it ran at all. See you on the next one.
+To summarize, Flash Attention's whole idea is streaming softmax written very efficiently using Triton (GPU kernels). More to come up GPU kernels and model scaling, that's it for now!
 
 ## References
 
